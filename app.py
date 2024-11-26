@@ -561,7 +561,7 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
 def process_data(df, params):
     # First, ensure params has all required fields
     pipe_params = {
-        'pipe_length': params.get('pipe_length', 10),  # Default 10m if not specified
+        'pipe_length': params.get('pipe_length', 10),
         'pipe_to_pipe_max_distance': params.get('pipe_to_pipe_max_distance', 100),
         'pipe_to_pipe_tolerance': params.get('pipe_to_pipe_tolerance', 20),
         'pipe_to_pipe_diff_material_max_distance': params.get('pipe_to_pipe_diff_material_max_distance', 50),
@@ -576,8 +576,9 @@ def process_data(df, params):
         
     manholes = {}
     pipes = []
+    valid_manholes = {}  # Store manholes with valid pipe data
 
-    # Process manholes and pipes
+    # First pass: Process manholes and identify valid ones
     for manhole_id, manhole_group in cleaned_data.groupby('exoTag'):
         first_row = manhole_group.iloc[0]
         
@@ -589,6 +590,24 @@ def process_data(df, params):
         z_ground_level = first_row['Z = Ground Level Elevation']
         depth_of_manhole = first_row['Depth of Manhole to GL']
 
+        # Check if manhole has any valid pipe data
+        has_valid_pipe = False
+        for _, row in manhole_group.iterrows():
+            if (not pd.isna(row['Depth of the Utilities from GL']) and 
+                not pd.isna(row['Diameter of the Utilities (inch)']) and 
+                not pd.isna(row['Exit Azimuth of Utility']) and 
+                not pd.isna(row['Material of the Utility'])):
+                has_valid_pipe = True
+                break
+
+        if has_valid_pipe:
+            valid_manholes[str(manhole_id)] = {
+                'x': float(x),
+                'y': float(y),
+                'z': float(z_ground_level),
+                'depth': float(depth_of_manhole)
+            }
+
         manholes[str(manhole_id)] = {
             'x': float(x),
             'y': float(y),
@@ -596,157 +615,115 @@ def process_data(df, params):
             'depth': float(depth_of_manhole)
         }
 
-        # Create pipes for each utility in the manhole
+        # Create directional pipes for visualization
         for _, row in manhole_group.iterrows():
             try:
-                # Skip rows without pipe numbers
-                pipe_number = str(row['pipeTag']).strip()
-                if pipe_number == '' or pipe_number == 'nan':
-                    continue
-                    
-                if pd.isna(row['Exit Azimuth of Utility']):
-                    continue
-
-                # Skip if coordinates are invalid
-                if row['X'] == 0 and row['Y'] == 0:
+                # Skip rows with missing pipe data
+                if (pd.isna(row['Depth of the Utilities from GL']) or 
+                    pd.isna(row['Diameter of the Utilities (inch)']) or 
+                    pd.isna(row['Exit Azimuth of Utility']) or 
+                    pd.isna(row['Material of the Utility'])):
                     continue
 
-                azimuth_rad = math.radians(float(row['Exit Azimuth of Utility']))
-                dx = math.sin(azimuth_rad)
-                dy = math.cos(azimuth_rad)
+                # Create directional pipe
+                pipe_data = create_directional_pipe(row, x, y, z_ground_level, str(manhole_id))
+                if pipe_data:
+                    pipes.append(pipe_data)
 
-                diameter = validate_numeric(
-                    row['Diameter of the Utilities (inch)'] * 0.0254,  # Convert to meters
-                    default=0.1,
-                    allow_zero=False
-                )
-
-                utility_depth = validate_numeric(
-                    row['Depth of the Utilities from GL'],
-                    default=0,
-                    allow_zero=True
-                )
-
-                z_pipe = z_ground_level - utility_depth
-
-                pipes.append({
-                    'start_point': (float(x), float(y), float(z_pipe)),
-                    'direction': (dx, dy, 0),
-                    'type': str(row['Type of Utility']),
-                    'diameter': diameter,
-                    'pipe_number': pipe_number,
-                    'manhole_id': str(manhole_id)
-                })
             except Exception as e:
                 st.warning(f"Skipping invalid pipe data: {str(e)}")
                 continue
 
-    # Calculate connecting pipes
-    connecting_pipes = []
-    processed_pairs = set()  # To avoid duplicate connections
-
-    # For each pipe endpoint
-    for pipe1 in pipes:
-        start1 = pipe1['start_point']
-        end1 = (
-            start1[0] + pipe1['direction'][0] * pipe_params['pipe_length'],
-            start1[1] + pipe1['direction'][1] * pipe_params['pipe_length'],
-            start1[2]
-        )
-
-        # Check for connections with other pipes
-        for pipe2 in pipes:
-            if pipe1 == pipe2:
+    # Second pass: Create connecting pipes between valid manholes
+    processed_pairs = set()
+    for manhole1_id, manhole1_data in valid_manholes.items():
+        manhole1_pipes = [p for p in pipes if p['manhole_id'] == manhole1_id]
+        
+        for manhole2_id, manhole2_data in valid_manholes.items():
+            if manhole1_id >= manhole2_id:  # Avoid duplicate connections
                 continue
 
-            # Create a unique identifier for this pipe pair
-            pair_id = tuple(sorted([pipe1['pipe_number'], pipe2['pipe_number']]))
+            pair_id = tuple(sorted([manhole1_id, manhole2_id]))
             if pair_id in processed_pairs:
                 continue
 
-            # Skip if pipes are from the same manhole
-            if pipe1['manhole_id'] == pipe2['manhole_id']:
-                continue
+            # Check if manholes have compatible utility types
+            utility_types1 = set(p['type'] for p in manhole1_pipes)
+            utility_types2 = set(p['type'] for p in [p for p in pipes if p['manhole_id'] == manhole2_id])
+            common_utilities = utility_types1.intersection(utility_types2)
 
-            start2 = pipe2['start_point']
-            end2 = (
-                start2[0] + pipe2['direction'][0] * pipe_params['pipe_length'],
-                start2[1] + pipe2['direction'][1] * pipe_params['pipe_length'],
-                start2[2]
-            )
+            if common_utilities:
+                distance = math.sqrt(
+                    (manhole1_data['x'] - manhole2_data['x'])**2 +
+                    (manhole1_data['y'] - manhole2_data['y'])**2
+                )
 
-            # Calculate distances between pipe endpoints
-            distances = [
-                (math.sqrt((end1[0] - start2[0])**2 + (end1[1] - start2[1])**2), end1, start2),
-                (math.sqrt((start1[0] - end2[0])**2 + (start1[1] - end2[1])**2), start1, end2),
-                (math.sqrt((end1[0] - end2[0])**2 + (end1[1] - end2[1])**2), end1, end2),
-                (math.sqrt((start1[0] - start2[0])**2 + (start1[1] - start2[1])**2), start1, start2)
-            ]
-
-            min_distance, point1, point2 = min(distances, key=lambda x: x[0])
-
-            # Check if pipes should be connected based on type and distance
-            max_distance = (pipe_params['pipe_to_pipe_diff_material_max_distance'] 
-                          if pipe1['type'] != pipe2['type'] 
-                          else pipe_params['pipe_to_pipe_max_distance'])
-            
-            tolerance = (pipe_params['pipe_to_pipe_diff_tolerance'] 
-                       if pipe1['type'] != pipe2['type'] 
-                       else pipe_params['pipe_to_pipe_tolerance'])
-
-            if min_distance <= max_distance:
-                # Calculate azimuth between points
-                dx = point2[0] - point1[0]
-                dy = point2[1] - point1[1]
-                azimuth = math.degrees(math.atan2(dx, dy)) % 360
-
-                # Calculate azimuth difference with both pipes
-                azimuth1 = math.degrees(math.atan2(pipe1['direction'][0], pipe1['direction'][1])) % 360
-                azimuth2 = math.degrees(math.atan2(pipe2['direction'][0], pipe2['direction'][1])) % 360
-                
-                angle_diff1 = min(abs(azimuth - azimuth1), abs(360 - abs(azimuth - azimuth1)))
-                angle_diff2 = min(abs(azimuth - azimuth2), abs(360 - abs(azimuth - azimuth2)))
-
-                # Check if the connection angle is within tolerance for both pipes
-                if angle_diff1 <= tolerance and angle_diff2 <= tolerance:
-                    connecting_pipes.append({
-                        'start_point': point1,
-                        'end_point': point2,
-                        'type': pipe1['type'],
-                        'diameter': min(pipe1['diameter'], pipe2['diameter']),
-                        'is_connection': True,
-                        'pipe_number': f"CONN_{pipe1['pipe_number']}_{pipe2['pipe_number']}",
-                        'connected_pipes': [pipe1['pipe_number'], pipe2['pipe_number']],
-                        'connection_distance': min_distance,
-                        'connection_angle1': angle_diff1,
-                        'connection_angle2': angle_diff2
-                    })
-                    
-                    processed_pairs.add(pair_id)
-
-    # Add connecting pipes to the main pipes list
-    pipes.extend(connecting_pipes)
-
-    # Log connection statistics
-    if connecting_pipes:
-        st.info(f"Found {len(connecting_pipes)} valid pipe connections")
-        
-        # Create detailed connection report
-        connection_details = pd.DataFrame([{
-            'Connection ID': p['pipe_number'],
-            'Connected Pipes': ', '.join(p['connected_pipes']),
-            'Distance': f"{p['connection_distance']:.2f}m",
-            'Angle 1': f"{p['connection_angle1']:.1f}°",
-            'Angle 2': f"{p['connection_angle2']:.1f}°",
-            'Utility Type': p['type'],
-            'Diameter': f"{p['diameter']*1000:.1f}mm"
-        } for p in connecting_pipes])
-        
-        with st.expander("View Connection Details"):
-            st.dataframe(connection_details)
+                if distance <= pipe_params['pipe_to_manhole_max_distance']:
+                    # Create connecting pipe for each common utility type
+                    for utility_type in common_utilities:
+                        pipe1 = next((p for p in manhole1_pipes if p['type'] == utility_type), None)
+                        pipe2 = next((p for p in pipes if p['manhole_id'] == manhole2_id and p['type'] == utility_type), None)
+                        
+                        if pipe1 and pipe2:
+                            connection = create_manhole_connection(
+                                manhole1_data, manhole2_data,
+                                pipe1, pipe2,
+                                manhole1_id, manhole2_id
+                            )
+                            if connection:
+                                pipes.append(connection)
+                                processed_pairs.add(pair_id)
 
     return manholes, pipes
 
+def create_directional_pipe(row, x, y, z_ground_level, manhole_id):
+    """Create a directional pipe for visualization purposes."""
+    try:
+        azimuth_rad = math.radians(float(row['Exit Azimuth of Utility']))
+        dx = math.sin(azimuth_rad)
+        dy = math.cos(azimuth_rad)
+
+        diameter = validate_numeric(
+            row['Diameter of the Utilities (inch)'] * 0.0254,  # Convert to meters
+            default=0.1,
+            allow_zero=False
+        )
+
+        utility_depth = validate_numeric(
+            row['Depth of the Utilities from GL'],
+            default=0,
+            allow_zero=True
+        )
+
+        z_pipe = z_ground_level - utility_depth
+
+        return {
+            'start_point': (float(x), float(y), float(z_pipe)),
+            'direction': (dx, dy, 0),
+            'type': str(row['Type of Utility']),
+            'diameter': diameter,
+            'pipe_number': str(row['pipeTag']) if 'pipeTag' in row else 'unknown',
+            'manhole_id': manhole_id,
+            'is_directional': True,
+            'azimuth': float(row['Exit Azimuth of Utility']),
+            'material': str(row['Material of the Utility'])
+        }
+    except Exception as e:
+        st.warning(f"Error creating directional pipe: {str(e)}")
+        return None
+
+def create_manhole_connection(manhole1_data, manhole2_data, pipe1, pipe2, manhole1_id, manhole2_id):
+    """Create a connecting pipe between two manholes based on compatible pipes."""
+    return {
+        'start_point': (manhole1_data['x'], manhole1_data['y'], pipe1['start_point'][2]),
+        'end_point': (manhole2_data['x'], manhole2_data['y'], pipe2['start_point'][2]),
+        'type': pipe1['type'],
+        'diameter': min(pipe1['diameter'], pipe2['diameter']),
+        'pipe_number': f"CONN_{manhole1_id}_{manhole2_id}",
+        'is_connection': True,
+        'connected_manholes': [manhole1_id, manhole2_id],
+        'material': pipe1['material']
+    }
 # Streamlit app
 st.set_page_config(layout="wide", page_title="3D Pipe Network Visualization")
 

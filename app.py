@@ -10,6 +10,7 @@ import json
 from io import StringIO
 from collections import defaultdict
 from copy import deepcopy
+import plotly.graph_objects as go
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -135,8 +136,13 @@ def calculate_pipe_endpoints(manholes, pipes, pipe_length):
         })
     return pipe_endpoints
 
-if 'camera_position' not in st.session_state:
-    st.session_state.camera_position = None
+if 'camera' not in st.session_state:
+    # Initialize with default camera position
+    st.session_state.camera = dict(
+        up=dict(x=0, y=0, z=1),
+        center=dict(x=0, y=0, z=0),
+        eye=dict(x=1.25, y=1.25, z=1.25)
+    )
 
 def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, show_pipes=True, selected_utilities=None):
     fig = go.Figure()
@@ -253,28 +259,26 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
                     hoverinfo='text'
                 ))
 
-    layout_dict = {
-        'scene': {
-            'xaxis_title': 'X',
-            'yaxis_title': 'Y',
-            'zaxis_title': 'Z',
-            'aspectmode': 'data'
-        },
-        'showlegend': True,
-        'title': '3D Pipe Network Visualization',
-        'height': 800,
-        'legend': {
-            'groupclick': "toggleitem"
-        }
-    }
-
-    # If we have a saved camera position, use it
-    if st.session_state.camera_position is not None:
-        layout_dict['scene']['camera'] = st.session_state.camera_position
-
-    fig.update_layout(**layout_dict)
+    # Update layout with explicit camera position
+    fig.update_layout(
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z',
+            aspectmode='data',
+            camera=st.session_state.camera  # Use the stored camera position
+        ),
+        showlegend=True,
+        title='3D Pipe Network Visualization',
+        height=800,
+        legend=dict(
+            groupclick="toggleitem"
+        ),
+        uirevision='true'  # This helps maintain other UI states
+    )
 
     return fig
+    
 def create_elevation_profile(manholes, pipes):
     fig = go.Figure()
     
@@ -911,21 +915,50 @@ if uploaded_file is not None:
                     selected_utilities
                 )
             
-                # Add a callback to save the camera position
-                fig.update_layout({
-                    'uirevision': True  # This helps maintain zoom/pan state
-                })
+                # Add a callback to capture camera position changes
+                def update_camera(fig, camera):
+                    if fig is not None and fig.layout.scene.camera is not None:
+                        new_camera = fig.layout.scene.camera
+                        st.session_state.camera = dict(
+                            up=dict(x=new_camera.up.x, y=new_camera.up.y, z=new_camera.up.z),
+                            center=dict(x=new_camera.center.x, y=new_camera.center.y, z=new_camera.center.z),
+                            eye=dict(x=new_camera.eye.x, y=new_camera.eye.y, z=new_camera.eye.z)
+                        )
             
                 # Display the plot
-                plotly_chart = st.plotly_chart(
+                st.plotly_chart(
                     fig, 
                     use_container_width=True, 
-                    key="3d_view"
+                    key="3d_view",
+                    config={
+                        'displayModeBar': True,
+                        'modeBarButtonsToAdd': ['resetCameraDefault3d'],
+                        'scrollZoom': True,
+                        'doubleClick': 'reset+autosize'
+                    },
+                    on_change=update_camera
                 )
-                
-                # Save camera position after any interaction
-                if fig.layout.scene.camera:
-                    st.session_state.camera_position = fig.layout.scene.camera
+            
+                # Add camera controls in expander
+                with st.expander("Camera Controls"):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.write("Eye Position")
+                        st.session_state.camera['eye']['x'] = st.slider("Eye X", -10.0, 10.0, st.session_state.camera['eye']['x'], key='eye_x')
+                        st.session_state.camera['eye']['y'] = st.slider("Eye Y", -10.0, 10.0, st.session_state.camera['eye']['y'], key='eye_y')
+                        st.session_state.camera['eye']['z'] = st.slider("Eye Z", -10.0, 10.0, st.session_state.camera['eye']['z'], key='eye_z')
+                    
+                    with col2:
+                        st.write("Center Position")
+                        st.session_state.camera['center']['x'] = st.slider("Center X", -10.0, 10.0, st.session_state.camera['center']['x'], key='center_x')
+                        st.session_state.camera['center']['y'] = st.slider("Center Y", -10.0, 10.0, st.session_state.camera['center']['y'], key='center_y')
+                        st.session_state.camera['center']['z'] = st.slider("Center Z", -10.0, 10.0, st.session_state.camera['center']['z'], key='center_z')
+                    
+                    with col3:
+                        st.write("Up Vector")
+                        st.session_state.camera['up']['x'] = st.slider("Up X", -1.0, 1.0, st.session_state.camera['up']['x'], key='up_x')
+                        st.session_state.camera['up']['y'] = st.slider("Up Y", -1.0, 1.0, st.session_state.camera['up']['y'], key='up_y')
+                        st.session_state.camera['up']['z'] = st.slider("Up Z", -1.0, 1.0, st.session_state.camera['up']['z'], key='up_z')
             
                 # Display current visualization parameters
                 with st.expander("Current Parameters"):

@@ -902,91 +902,128 @@ if uploaded_file is not None:
             # Create tabs for different visualizations
             tab1, tab2, tab3, tab4 = st.tabs(["3D View", "Network Analysis", "Elevation Profile", "Export"])
             
+            if 'camera' not in st.session_state:
+                st.session_state.camera = dict(
+                    up=dict(x=0, y=0, z=1),      # Default up vector points along z-axis
+                    center=dict(x=0, y=0, z=0),   # Default center (no translation)
+                    eye=dict(x=1.25, y=1.25, z=1.25)  # Default camera position
+                )
+            
+            def update_view():
+                st.experimental_rerun()
+            
             with tab1:
                 # Camera controls in an expander
                 with st.expander("📷 Camera Controls", expanded=True):
-                    # Zoom control
-                    zoom = st.slider(
-                        "Zoom Level", 0.1, 5.0, 
-                        value=math.sqrt(sum(x**2 for x in st.session_state.camera['eye'].values())),
-                        step=0.1,
-                        help="Adjust zoom level (changes the eye vector norm)"
-                    )
-                    
                     # Standard view presets
                     cols = st.columns(4)
                     with cols[0]:
                         if st.button("Top View"):
-                            st.session_state.camera.update({
-                                'up': dict(x=0, y=1, z=0),
-                                'center': dict(x=0, y=0, z=0),
-                                'eye': dict(x=0, y=0, z=zoom)
-                            })
+                            st.session_state.camera = dict(
+                                up=dict(x=0, y=1, z=0),
+                                center=dict(x=0, y=0, z=0),
+                                eye=dict(x=0, y=0, z=2)
+                            )
+                            update_view()
                     with cols[1]:
                         if st.button("Front View"):
-                            st.session_state.camera.update({
-                                'up': dict(x=0, y=0, z=1),
-                                'center': dict(x=0, y=0, z=0),
-                                'eye': dict(x=0, y=zoom, z=0)
-                            })
+                            st.session_state.camera = dict(
+                                up=dict(x=0, y=0, z=1),
+                                center=dict(x=0, y=0, z=0),
+                                eye=dict(x=0, y=2, z=0)
+                            )
+                            update_view()
                     with cols[2]:
                         if st.button("Side View"):
-                            st.session_state.camera.update({
-                                'up': dict(x=0, y=0, z=1),
-                                'center': dict(x=0, y=0, z=0),
-                                'eye': dict(x=zoom, y=0, z=0)
-                            })
+                            st.session_state.camera = dict(
+                                up=dict(x=0, y=0, z=1),
+                                center=dict(x=0, y=0, z=0),
+                                eye=dict(x=2, y=0, z=0)
+                            )
+                            update_view()
                     with cols[3]:
                         if st.button("Isometric"):
-                            norm = zoom / math.sqrt(3)
-                            st.session_state.camera.update({
-                                'up': dict(x=0, y=0, z=1),
-                                'center': dict(x=0, y=0, z=0),
-                                'eye': dict(x=norm, y=norm, z=norm)
-                            })
+                            st.session_state.camera = dict(
+                                up=dict(x=0, y=0, z=1),
+                                center=dict(x=0, y=0, z=0),
+                                eye=dict(x=1.25, y=1.25, z=1.25)
+                            )
+                            update_view()
             
-                    # Advanced controls in tabs
-                    camera_tab1, camera_tab2 = st.tabs(["View Position", "Center & Up"])
-                    
-                    with camera_tab1:
-                        # Eye position (normalized by zoom)
-                        st.write("Camera Position (Eye):")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            eye_x = st.slider("X", -1.0, 1.0, 
-                                st.session_state.camera['eye']['x']/zoom, 
-                                key='eye_x')
-                            st.session_state.camera['eye']['x'] = eye_x * zoom
-                        with col2:
-                            eye_y = st.slider("Y", -1.0, 1.0, 
-                                st.session_state.camera['eye']['y']/zoom,
-                                key='eye_y')
-                            st.session_state.camera['eye']['y'] = eye_y * zoom
-                        with col3:
-                            eye_z = st.slider("Z", -1.0, 1.0, 
-                                st.session_state.camera['eye']['z']/zoom,
-                                key='eye_z')
-                            st.session_state.camera['eye']['z'] = eye_z * zoom
+                    # Eye position controls
+                    st.write("Camera Position (Eye):")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        new_eye_x = st.slider("Eye X", -5.0, 5.0, 
+                            value=float(st.session_state.camera['eye']['x']), 
+                            key='eye_x')
+                        if new_eye_x != st.session_state.camera['eye']['x']:
+                            st.session_state.camera['eye']['x'] = new_eye_x
+                            update_view()
+                    with col2:
+                        new_eye_y = st.slider("Eye Y", -5.0, 5.0, 
+                            value=float(st.session_state.camera['eye']['y']),
+                            key='eye_y')
+                        if new_eye_y != st.session_state.camera['eye']['y']:
+                            st.session_state.camera['eye']['y'] = new_eye_y
+                            update_view()
+                    with col3:
+                        new_eye_z = st.slider("Eye Z", -5.0, 5.0, 
+                            value=float(st.session_state.camera['eye']['z']),
+                            key='eye_z')
+                        if new_eye_z != st.session_state.camera['eye']['z']:
+                            st.session_state.camera['eye']['z'] = new_eye_z
+                            update_view()
             
-                    with camera_tab2:
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write("Center (Look At):")
-                            st.session_state.camera['center']['x'] = st.slider("Center X", -2.0, 2.0, 
-                                float(st.session_state.camera['center']['x']), 0.1, key='center_x')
-                            st.session_state.camera['center']['y'] = st.slider("Center Y", -2.0, 2.0, 
-                                float(st.session_state.camera['center']['y']), 0.1, key='center_y')
-                            st.session_state.camera['center']['z'] = st.slider("Center Z", -2.0, 2.0, 
-                                float(st.session_state.camera['center']['z']), 0.1, key='center_z')
-                        
-                        with col2:
-                            st.write("Up Direction:")
-                            st.session_state.camera['up']['x'] = st.slider("Up X", -1.0, 1.0, 
-                                float(st.session_state.camera['up']['x']), 0.1, key='up_x')
-                            st.session_state.camera['up']['y'] = st.slider("Up Y", -1.0, 1.0, 
-                                float(st.session_state.camera['up']['y']), 0.1, key='up_y')
-                            st.session_state.camera['up']['z'] = st.slider("Up Z", -1.0, 1.0, 
-                                float(st.session_state.camera['up']['z']), 0.1, key='up_z')
+                    # Up vector controls
+                    st.write("Up Direction:")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        new_up_x = st.slider("Up X", -1.0, 1.0, 
+                            value=float(st.session_state.camera['up']['x']),
+                            key='up_x')
+                        if new_up_x != st.session_state.camera['up']['x']:
+                            st.session_state.camera['up']['x'] = new_up_x
+                            update_view()
+                    with col2:
+                        new_up_y = st.slider("Up Y", -1.0, 1.0, 
+                            value=float(st.session_state.camera['up']['y']),
+                            key='up_y')
+                        if new_up_y != st.session_state.camera['up']['y']:
+                            st.session_state.camera['up']['y'] = new_up_y
+                            update_view()
+                    with col3:
+                        new_up_z = st.slider("Up Z", -1.0, 1.0, 
+                            value=float(st.session_state.camera['up']['z']),
+                            key='up_z')
+                        if new_up_z != st.session_state.camera['up']['z']:
+                            st.session_state.camera['up']['z'] = new_up_z
+                            update_view()
+            
+                    # Center position controls
+                    st.write("Center (Look At):")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        new_center_x = st.slider("Center X", -2.0, 2.0, 
+                            value=float(st.session_state.camera['center']['x']),
+                            key='center_x')
+                        if new_center_x != st.session_state.camera['center']['x']:
+                            st.session_state.camera['center']['x'] = new_center_x
+                            update_view()
+                    with col2:
+                        new_center_y = st.slider("Center Y", -2.0, 2.0, 
+                            value=float(st.session_state.camera['center']['y']),
+                            key='center_y')
+                        if new_center_y != st.session_state.camera['center']['y']:
+                            st.session_state.camera['center']['y'] = new_center_y
+                            update_view()
+                    with col3:
+                        new_center_z = st.slider("Center Z", -2.0, 2.0, 
+                            value=float(st.session_state.camera['center']['z']),
+                            key='center_z')
+                        if new_center_z != st.session_state.camera['center']['z']:
+                            st.session_state.camera['center']['z'] = new_center_z
+                            update_view()
             
                 # Create and display the visualization
                 fig = create_3d_visualization(
@@ -996,6 +1033,14 @@ if uploaded_file is not None:
                     show_manholes,
                     show_pipes,
                     selected_utilities
+                )
+            
+                # Make sure the camera settings are applied
+                fig.update_layout(
+                    scene=dict(
+                        camera=st.session_state.camera,
+                    ),
+                    uirevision=True
                 )
             
                 # Display the plot
@@ -1011,12 +1056,9 @@ if uploaded_file is not None:
                     }
                 )
             
-                # Display current camera settings if needed
+                # Display current camera settings
                 with st.expander("Current Camera Settings"):
-                    st.json({
-                        "zoom": zoom,
-                        "camera": st.session_state.camera
-                    })
+                    st.json(st.session_state.camera)
             
             with tab2:
                 st.subheader("Network Analysis")

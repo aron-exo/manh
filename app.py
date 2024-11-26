@@ -574,12 +574,14 @@ def process_data(df, params):
     if cleaned_data is None:
         return None, None
         
+    # Initialize data structures
     manholes = {}
+    manhole_pipes = {}  # Dictionary to store pipes by manhole
     pipes = []
-    valid_manholes = {}  # Store manholes with valid pipe data
 
-    # First pass: Process manholes and identify valid ones
+    # First pass: Process manholes and their pipes
     for manhole_id, manhole_group in cleaned_data.groupby('exoTag'):
+        manhole_id = str(manhole_id)
         first_row = manhole_group.iloc[0]
         
         # Skip invalid coordinates
@@ -590,55 +592,60 @@ def process_data(df, params):
         z_ground_level = first_row['Z = Ground Level Elevation']
         depth_of_manhole = first_row['Depth of Manhole to GL']
 
-        # Check if manhole has any valid pipe data
-        has_valid_pipe = False
-        for _, row in manhole_group.iterrows():
-            if (not pd.isna(row['Depth of the Utilities from GL']) and 
-                not pd.isna(row['Diameter of the Utilities (inch)']) and 
-                not pd.isna(row['Exit Azimuth of Utility']) and 
-                not pd.isna(row['Material of the Utility'])):
-                has_valid_pipe = True
-                break
-
-        if has_valid_pipe:
-            valid_manholes[str(manhole_id)] = {
-                'x': float(x),
-                'y': float(y),
-                'z': float(z_ground_level),
-                'depth': float(depth_of_manhole)
-            }
-
-        manholes[str(manhole_id)] = {
+        # Store manhole data
+        manholes[manhole_id] = {
             'x': float(x),
             'y': float(y),
             'z': float(z_ground_level),
-            'depth': float(depth_of_manhole)
+            'depth': float(depth_of_manhole),
+            'has_valid_pipes': False
         }
+        manhole_pipes[manhole_id] = []
 
-        # Create directional pipes for visualization
+        # Process pipes for this manhole
         for _, row in manhole_group.iterrows():
             try:
                 # Skip rows with missing pipe data
                 if (pd.isna(row['Depth of the Utilities from GL']) or 
                     pd.isna(row['Diameter of the Utilities (inch)']) or 
                     pd.isna(row['Exit Azimuth of Utility']) or 
-                    pd.isna(row['Material of the Utility'])):
+                    pd.isna(row['Material of the Utility']) or 
+                    pd.isna(row['Type of Utility'])):
                     continue
 
                 # Create directional pipe
-                pipe_data = create_directional_pipe(row, x, y, z_ground_level, str(manhole_id))
-                if pipe_data:
-                    pipes.append(pipe_data)
+                pipe_data = {
+                    'start_point': (float(x), float(y), float(z_ground_level - float(row['Depth of the Utilities from GL']))),
+                    'direction': (
+                        math.sin(math.radians(float(row['Exit Azimuth of Utility']))),
+                        math.cos(math.radians(float(row['Exit Azimuth of Utility']))),
+                        0
+                    ),
+                    'type': str(row['Type of Utility']),
+                    'diameter': float(row['Diameter of the Utilities (inch)']) * 0.0254,  # Convert to meters
+                    'pipe_number': str(row['pipeTag']) if 'pipeTag' in row else 'unknown',
+                    'manhole_id': manhole_id,
+                    'is_directional': True,
+                    'azimuth': float(row['Exit Azimuth of Utility']),
+                    'material': str(row['Material of the Utility'])
+                }
+                
+                pipes.append(pipe_data)
+                manhole_pipes[manhole_id].append(pipe_data)
+                manholes[manhole_id]['has_valid_pipes'] = True
 
             except Exception as e:
-                st.warning(f"Skipping invalid pipe data: {str(e)}")
+                st.warning(f"Skipping invalid pipe data for manhole {manhole_id}: {str(e)}")
                 continue
 
-    # Second pass: Create connecting pipes between valid manholes
+    # Second pass: Create connecting pipes between manholes with valid pipes
     processed_pairs = set()
+    
+    # Get list of manholes with valid pipes
+    valid_manholes = {mid: data for mid, data in manholes.items() if data['has_valid_pipes']}
+
+    # Create connections between valid manholes
     for manhole1_id, manhole1_data in valid_manholes.items():
-        manhole1_pipes = [p for p in pipes if p['manhole_id'] == manhole1_id]
-        
         for manhole2_id, manhole2_data in valid_manholes.items():
             if manhole1_id >= manhole2_id:  # Avoid duplicate connections
                 continue
@@ -647,9 +654,9 @@ def process_data(df, params):
             if pair_id in processed_pairs:
                 continue
 
-            # Check if manholes have compatible utility types
-            utility_types1 = set(p['type'] for p in manhole1_pipes)
-            utility_types2 = set(p['type'] for p in [p for p in pipes if p['manhole_id'] == manhole2_id])
+            # Get utility types for both manholes
+            utility_types1 = set(p['type'] for p in manhole_pipes[manhole1_id])
+            utility_types2 = set(p['type'] for p in manhole_pipes[manhole2_id])
             common_utilities = utility_types1.intersection(utility_types2)
 
             if common_utilities:
@@ -661,18 +668,29 @@ def process_data(df, params):
                 if distance <= pipe_params['pipe_to_manhole_max_distance']:
                     # Create connecting pipe for each common utility type
                     for utility_type in common_utilities:
-                        pipe1 = next((p for p in manhole1_pipes if p['type'] == utility_type), None)
-                        pipe2 = next((p for p in pipes if p['manhole_id'] == manhole2_id and p['type'] == utility_type), None)
+                        pipe1 = next((p for p in manhole_pipes[manhole1_id] if p['type'] == utility_type), None)
+                        pipe2 = next((p for p in manhole_pipes[manhole2_id] if p['type'] == utility_type), None)
                         
                         if pipe1 and pipe2:
-                            connection = create_manhole_connection(
-                                manhole1_data, manhole2_data,
-                                pipe1, pipe2,
-                                manhole1_id, manhole2_id
-                            )
-                            if connection:
-                                pipes.append(connection)
-                                processed_pairs.add(pair_id)
+                            # Create connecting pipe
+                            connecting_pipe = {
+                                'start_point': (manhole1_data['x'], manhole1_data['y'], pipe1['start_point'][2]),
+                                'end_point': (manhole2_data['x'], manhole2_data['y'], pipe2['start_point'][2]),
+                                'type': utility_type,
+                                'diameter': min(pipe1['diameter'], pipe2['diameter']),
+                                'pipe_number': f"CONN_{manhole1_id}_{manhole2_id}_{utility_type}",
+                                'is_connection': True,
+                                'connected_manholes': [manhole1_id, manhole2_id],
+                                'material': pipe1['material'],
+                                'manhole_id': manhole1_id  # For consistency with the visualization code
+                            }
+                            pipes.append(connecting_pipe)
+                            processed_pairs.add(pair_id)
+
+    if pipes:
+        st.info(f"Created {len([p for p in pipes if p.get('is_connection', False)])} connecting pipes between manholes")
+    else:
+        st.warning("No valid pipes were created")
 
     return manholes, pipes
 

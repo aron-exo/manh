@@ -429,11 +429,22 @@ def calculate_pipe_connections(manholes, pipes, params):
 
     return connected_pipes
 
-def create_3d_visualization(manholes, pipes, params, show_manholes=True, show_pipes=True, selected_utilities=None):
+def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, show_pipes=True, selected_utilities=None):
+    """
+    Create 3D visualization of the pipe network.
+    
+    Args:
+        manholes: Dictionary of manhole data
+        pipes: List of pipe data
+        pipe_length: Integer/Float value for pipe length in meters
+        show_manholes: Boolean to show/hide manholes
+        show_pipes: Boolean to show/hide pipes
+        selected_utilities: List of utility types to display
+    """
     fig = go.Figure()
 
     # Add manholes
-    if show_manholes:
+    if show_manholes and manholes:
         manhole_x = []
         manhole_y = []
         manhole_z = []
@@ -460,43 +471,36 @@ def create_3d_visualization(manholes, pipes, params, show_manholes=True, show_pi
             name='Manholes'
         ))
 
-    # Add pipes and connections
-    if show_pipes:
-        # Calculate pipe endpoints for original pipes
-        pipe_endpoints = []
+    # Add pipes
+    if show_pipes and pipes:
+        # Group pipes by type
+        pipe_groups = defaultdict(list)
+        
         for pipe in pipes:
-            if 'is_connection' in pipe:
-                # For connection pipes, use the pre-calculated endpoints
-                pipe_endpoints.append({
-                    'start': pipe['start_point'],
-                    'end': pipe['end_point'],
-                    'type': pipe['type'],
-                    'diameter': pipe['diameter'],
-                    'is_connection': True,
-                    'pipe_number': pipe['pipe_number']
-                })
-            else:
-                # For regular pipes, calculate endpoints based on direction and length
+            if selected_utilities is None or pipe['type'] in selected_utilities:
                 start_point = pipe['start_point']
-                end_point = (
-                    start_point[0] + pipe['direction'][0] * params['pipe_length'],
-                    start_point[1] + pipe['direction'][1] * params['pipe_length'],
-                    start_point[2]
-                )
-                pipe_endpoints.append({
+                
+                if 'is_connection' in pipe and pipe['is_connection']:
+                    # For connection pipes, use the pre-calculated endpoints
+                    end_point = pipe['end_point']
+                else:
+                    # For regular pipes, calculate endpoints based on direction and length
+                    direction = pipe['direction']
+                    end_point = (
+                        start_point[0] + direction[0] * float(pipe_length),
+                        start_point[1] + direction[1] * float(pipe_length),
+                        start_point[2]
+                    )
+
+                pipe_data = {
                     'start': start_point,
                     'end': end_point,
                     'type': pipe['type'],
                     'diameter': pipe['diameter'],
-                    'is_connection': False,
+                    'is_connection': pipe.get('is_connection', False),
                     'pipe_number': pipe['pipe_number']
-                })
-        
-        # Group pipes by type
-        pipe_groups = defaultdict(list)
-        for pipe in pipe_endpoints:
-            if selected_utilities is None or pipe['type'] in selected_utilities:
-                pipe_groups[pipe['type']].append(pipe)
+                }
+                pipe_groups[pipe['type']].append(pipe_data)
 
         # Add pipes by type
         for pipe_type, pipes_of_type in pipe_groups.items():
@@ -511,7 +515,14 @@ def create_3d_visualization(manholes, pipes, params, show_manholes=True, show_pi
                 except:
                     line_width = min_width
 
-                line_style = 'dot' if pipe.get('is_connection', False) else 'solid'
+                line_style = 'dot' if pipe['is_connection'] else 'solid'
+                
+                hover_text = (
+                    f"{pipe_type}<br>"
+                    f"{'Connection ' if pipe['is_connection'] else ''}"
+                    f"Pipe: {pipe['pipe_number']}<br>"
+                    f"Diameter: {pipe['diameter']*1000:.1f}mm"
+                )
 
                 fig.add_trace(go.Scatter3d(
                     x=[pipe['start'][0], pipe['end'][0]],
@@ -523,8 +534,8 @@ def create_3d_visualization(manholes, pipes, params, show_manholes=True, show_pi
                         width=line_width,
                         dash=line_style
                     ),
-                    name=f"{pipe_type} {'(Connection)' if pipe.get('is_connection', False) else ''}",
-                    hovertext=f"{pipe_type}<br>{'Connection ' if pipe.get('is_connection', False) else ''}Pipe: {pipe['pipe_number']}<br>Diameter: {pipe['diameter']*1000:.1f}mm",
+                    name=f"{pipe_type} {'(Connection)' if pipe['is_connection'] else ''}",
+                    hovertext=hover_text,
                     hoverinfo='text'
                 ))
 
@@ -749,6 +760,7 @@ if uploaded_file is not None:
     st.sidebar.header("Visualization Parameters")
     pipe_length = st.sidebar.slider("Pipe Length (m)", 1, 50, 10)
     
+    # Connection parameters
     st.sidebar.header("Connection Parameters")
     pipe_to_pipe_max_distance = st.sidebar.slider("Pipe-to-Pipe Max Distance", 1, 200, 100)
     pipe_to_pipe_tolerance = st.sidebar.slider("Pipe-to-Pipe Tolerance", 1, 45, 20)
@@ -759,16 +771,15 @@ if uploaded_file is not None:
     pipe_to_manhole_max_distance = st.sidebar.slider("Pipe-to-Manhole Max Distance", 1, 50, 25)
     pipe_to_manhole_tolerance = st.sidebar.slider("Pipe-to-Manhole Tolerance", 1, 30, 10)
 
+    # Create params dictionary
     params = {
+        'pipe_length': pipe_length,
         'pipe_to_pipe_max_distance': pipe_to_pipe_max_distance,
-        'pipe_to_pipe_min_tolerance': pipe_to_pipe_tolerance,
-        'pipe_to_pipe_max_tolerance': pipe_to_pipe_tolerance,
+        'pipe_to_pipe_tolerance': pipe_to_pipe_tolerance,
         'pipe_to_pipe_diff_material_max_distance': pipe_to_pipe_diff_max_distance,
-        'pipe_to_pipe_diff_material_min_tolerance': pipe_to_pipe_diff_tolerance,
-        'pipe_to_pipe_diff_material_max_tolerance': pipe_to_pipe_diff_tolerance,
+        'pipe_to_pipe_diff_tolerance': pipe_to_pipe_diff_tolerance,
         'pipe_to_manhole_max_distance': pipe_to_manhole_max_distance,
-        'pipe_to_manhole_min_tolerance': pipe_to_manhole_tolerance,
-        'pipe_to_manhole_max_tolerance': pipe_to_manhole_tolerance
+        'pipe_to_manhole_tolerance': pipe_to_manhole_tolerance
     }
 
     try:
@@ -776,11 +787,14 @@ if uploaded_file is not None:
         df = unmerge_cell_copy_top_value_to_df(uploaded_file, "English")
         if df is not None:
             manholes, pipes = process_data(df, params)
+            
+            if manholes is None or pipes is None:
+                st.error("Error processing data. Please check your input file.")
+                st.stop()
 
             # Visualization settings
             st.sidebar.header("Visualization Settings")
             show_manholes = st.sidebar.checkbox("Show Manholes", value=True)
-# Visualization settings (continued)
             show_pipes = st.sidebar.checkbox("Show Pipes", value=True)
             
             # Filter utility types
@@ -792,6 +806,17 @@ if uploaded_file is not None:
                 default=utility_types
             )
 
+            # Create visualization with proper parameters
+            fig = create_3d_visualization(
+                manholes=manholes,
+                pipes=pipes,
+                pipe_length=params['pipe_length'],  # Pass pipe_length from params
+                show_manholes=show_manholes,
+                show_pipes=show_pipes,
+                selected_utilities=selected_utilities
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
             # Create tabs for different visualizations
             tab1, tab2, tab3, tab4 = st.tabs(["3D View", "Network Analysis", "Elevation Profile", "Export"])
 

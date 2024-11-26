@@ -151,6 +151,213 @@ def create_2d_map(manholes, pipes, selected_utilities=None, show_manholes=True, 
     
     return m
 
+def validate_numeric(value, default=0.0, allow_zero=True):
+    """Validate and convert numeric values"""
+    try:
+        result = float(value)
+        if pd.isna(result):
+            return default
+        if not allow_zero and result == 0:
+            return default
+        return result
+    except (ValueError, TypeError):
+        return default
+
+def clean_data(df):
+    """Clean and validate the input data"""
+    # Map Excel columns to expected column names
+    column_mapping = {
+        'X': 'X',
+        'Y': 'Y',
+        'Rim Level or Ground Level at the center of the manhole cover.': 'Z = Ground Level Elevation',
+        'Manhole Bottom Level or Depth (chose one only)': 'Depth of Manhole to GL',
+        'Type of Utility (Choose or write yourself)': 'Type of Utility',
+        'Pipe Invert Level': 'Depth of the Utilities from GL',
+        'Diameter of the Utilities (inch)': 'Diameter of the Utilities (inch)',
+        'Exit Azimuth of Utility (0-360)': 'Exit Azimuth of Utility',
+        'Material of the Utility': 'Material of the Utility',
+        'MANHOLE NUMBER': 'exoTag',
+        'PIPE NUMBER': 'pipeTag'
+    }
+    
+    # Rename columns
+    df = df.rename(columns=column_mapping)
+    
+    # Remove rows where both X and Y are 0 or missing
+    df = df[~((df['X'].fillna(0) == 0) & (df['Y'].fillna(0) == 0))]
+    
+    # Filter out rows without pipe numbers
+    if 'pipeTag' in df.columns:
+        df['pipeTag'] = df['pipeTag'].astype(str)
+        df = df[df['pipeTag'].notna() & (df['pipeTag'] != 'nan') & (df['pipeTag'].str.strip() != '')]
+    else:
+        st.error("PIPE NUMBER column not found in the Excel file.")
+        return None
+    
+    # Convert numeric columns with validation
+    numeric_columns = {
+        'X': {'allow_zero': False},
+        'Y': {'allow_zero': False},
+        'Z = Ground Level Elevation': {'allow_zero': True},
+        'Depth of Manhole to GL': {'allow_zero': True},
+        'Depth of the Utilities from GL': {'allow_zero': True},
+        'Diameter of the Utilities (inch)': {'allow_zero': False, 'default': 1.0},
+        'Exit Azimuth of Utility': {'allow_zero': True}
+    }
+    
+    for col, params in numeric_columns.items():
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: validate_numeric(
+                x, 
+                default=params.get('default', 0.0),
+                allow_zero=params.get('allow_zero', True)
+            ))
+    
+    # Ensure non-numeric columns are strings
+    string_columns = ['Type of Utility', 'Material of the Utility', 'exoTag']
+    for col in string_columns:
+        if col in df.columns:
+            df[col] = df[col].fillna('Unknown').astype(str)
+            df = df[df[col].str.strip() != '']
+    
+    # Remove rows with invalid coordinates
+    df = df[df['X'].notna() & df['Y'].notna() & (df['X'] != 0) & (df['Y'] != 0)]
+    
+    return df
+
+def process_data(df, params):
+    """Process the cleaned data into manholes and pipes"""
+    # Ensure params has required fields
+    pipe_params = {
+        'pipe_length': params.get('pipe_length', 10),
+    }
+
+    cleaned_data = clean_data(df)
+    if cleaned_data is None:
+        return None, None
+        
+    manholes = {}
+    manhole_pipes = {}
+    pipes = []
+
+    # Process manholes and pipes
+    for manhole_id, manhole_group in cleaned_data.groupby('exoTag'):
+        manhole_id = str(manhole_id)
+        first_row = manhole_group.iloc[0]
+        
+        # Skip invalid coordinates
+        if first_row['X'] == 0 and first_row['Y'] == 0:
+            continue
+            
+        x, y = first_row['X'], first_row['Y']
+        z_ground_level = first_row['Z = Ground Level Elevation']
+        depth_of_manhole = first_row['Depth of Manhole to GL']
+
+        # Store manhole data
+        manholes[manhole_id] = {
+            'x': float(x),
+            'y': float(y),
+            'z': float(z_ground_level),
+            'depth': float(depth_of_manhole)
+        }
+        manhole_pipes[manhole_id] = []
+
+        # Create pipes for each utility in the manhole
+        for _, row in manhole_group.iterrows():
+            try:
+                # Skip rows with missing pipe data
+                if (pd.isna(row['Depth of the Utilities from GL']) or 
+                    pd.isna(row['Diameter of the Utilities (inch)']) or 
+                    pd.isna(row['Exit Azimuth of Utility']) or 
+                    pd.isna(row['Type of Utility'])):
+                    continue
+
+                azimuth_rad = math.radians(float(row['Exit Azimuth of Utility']))
+                dx = math.sin(azimuth_rad)
+                dy = math.cos(azimuth_rad)
+
+                diameter = validate_numeric(
+                    row['Diameter of the Utilities (inch)'] * 0.0254,  # Convert to meters
+                    default=0.1,
+                    allow_zero=False
+                )
+
+                utility_depth = validate_numeric(
+                    row['Depth of the Utilities from GL'],
+                    default=0,
+                    allow_zero=True
+                )
+
+                z_pipe = z_ground_level - utility_depth
+
+                pipe_data = {
+                    'start_point': (float(x), float(y), float(z_pipe)),
+                    'direction': (dx, dy, 0),
+                    'type': str(row['Type of Utility']),
+                    'diameter': diameter,
+                    'pipe_number': str(row['pipeTag']) if 'pipeTag' in row else 'unknown',
+                    'manhole_id': manhole_id,
+                    'azimuth': float(row['Exit Azimuth of Utility']),
+                    'material': str(row.get('Material of the Utility', 'Unknown'))
+                }
+                
+                pipes.append(pipe_data)
+                manhole_pipes[manhole_id].append(pipe_data)
+
+            except Exception as e:
+                st.warning(f"Skipping invalid pipe data for manhole {manhole_id}: {str(e)}")
+                continue
+
+    # Calculate connecting pipes
+    connecting_pipes = calculate_connecting_pipes(manholes, manhole_pipes)
+    pipes.extend(connecting_pipes)
+
+    return manholes, pipes
+
+def calculate_connecting_pipes(manholes, manhole_pipes):
+    """Calculate connections between manholes with matching utilities"""
+    connecting_pipes = []
+    processed_pairs = set()
+
+    for manhole1_id, pipes1 in manhole_pipes.items():
+        for manhole2_id, pipes2 in manhole_pipes.items():
+            if manhole1_id >= manhole2_id:
+                continue
+
+            pair_id = tuple(sorted([manhole1_id, manhole2_id]))
+            if pair_id in processed_pairs:
+                continue
+
+            # Find matching utilities between manholes
+            utilities1 = {pipe['type'] for pipe in pipes1}
+            utilities2 = {pipe['type'] for pipe in pipes2}
+            common_utilities = utilities1.intersection(utilities2)
+
+            if common_utilities:
+                m1 = manholes[manhole1_id]
+                m2 = manholes[manhole2_id]
+                
+                # Create connection for each common utility type
+                for utility_type in common_utilities:
+                    pipe1 = next((p for p in pipes1 if p['type'] == utility_type), None)
+                    pipe2 = next((p for p in pipes2 if p['type'] == utility_type), None)
+                    
+                    if pipe1 and pipe2:
+                        connecting_pipes.append({
+                            'start_point': (m1['x'], m1['y'], pipe1['start_point'][2]),
+                            'end_point': (m2['x'], m2['y'], pipe2['start_point'][2]),
+                            'type': utility_type,
+                            'diameter': min(pipe1['diameter'], pipe2['diameter']),
+                            'pipe_number': f"CONN_{manhole1_id}_{manhole2_id}_{utility_type}",
+                            'is_connection': True,
+                            'material': pipe1['material'],
+                            'manhole_id': manhole1_id
+                        })
+
+                processed_pairs.add(pair_id)
+
+    return connecting_pipes
+
 # File uploader and main app logic
 uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx"])
 

@@ -314,6 +314,193 @@ def calculate_network_metrics(manholes, pipes):
     }
     return metrics
 
+def calculate_pipe_connections(manholes, pipes, params):
+    """Calculate pipe connections based on connection parameters."""
+    connected_pipes = []
+    processed_pairs = set()  # To avoid duplicate connections
+
+    # For each pipe endpoint
+    for pipe1 in pipes:
+        start1 = pipe1['start_point']
+        end1 = (
+            start1[0] + pipe1['direction'][0] * params['pipe_length'],
+            start1[1] + pipe1['direction'][1] * params['pipe_length'],
+            start1[2]
+        )
+
+        # Check for connections with other pipes
+        for pipe2 in pipes:
+            if pipe1 == pipe2:
+                continue
+
+            # Create a unique identifier for this pipe pair
+            pair_id = tuple(sorted([pipe1['pipe_number'], pipe2['pipe_number']]))
+            if pair_id in processed_pairs:
+                continue
+
+            start2 = pipe2['start_point']
+            end2 = (
+                start2[0] + pipe2['direction'][0] * params['pipe_length'],
+                start2[1] + pipe2['direction'][1] * params['pipe_length'],
+                start2[2]
+            )
+
+            # Calculate distances between pipe endpoints
+            distances = [
+                (math.sqrt((end1[0] - start2[0])**2 + (end1[1] - start2[1])**2), end1, start2),
+                (math.sqrt((start1[0] - end2[0])**2 + (start1[1] - end2[1])**2), start1, end2),
+                (math.sqrt((end1[0] - end2[0])**2 + (end1[1] - end2[1])**2), end1, end2),
+                (math.sqrt((start1[0] - start2[0])**2 + (start1[1] - start2[1])**2), start1, start2)
+            ]
+
+            min_distance, point1, point2 = min(distances, key=lambda x: x[0])
+
+            # Check if pipes should be connected based on type and distance
+            max_distance = (params['pipe_to_pipe_diff_material_max_distance'] 
+                          if pipe1['type'] != pipe2['type'] 
+                          else params['pipe_to_pipe_max_distance'])
+            
+            tolerance = (params['pipe_to_pipe_diff_tolerance'] 
+                       if pipe1['type'] != pipe2['type'] 
+                       else params['pipe_to_pipe_tolerance'])
+
+            if min_distance <= max_distance:
+                # Calculate azimuth between points
+                dx = point2[0] - point1[0]
+                dy = point2[1] - point1[1]
+                azimuth = math.degrees(math.atan2(dx, dy)) % 360
+
+                # Check if the connection angle is within tolerance
+                connected_pipes.append({
+                    'start_point': point1,
+                    'end_point': point2,
+                    'type': pipe1['type'],
+                    'diameter': min(pipe1['diameter'], pipe2['diameter']),
+                    'is_connection': True,
+                    'pipe_number': f"CONN_{pipe1['pipe_number']}_{pipe2['pipe_number']}"
+                })
+                
+                processed_pairs.add(pair_id)
+
+    return connected_pipes
+
+def create_3d_visualization(manholes, pipes, params, show_manholes=True, show_pipes=True, selected_utilities=None):
+    fig = go.Figure()
+
+    # Add manholes
+    if show_manholes:
+        manhole_x = []
+        manhole_y = []
+        manhole_z = []
+        manhole_text = []
+        
+        for manhole_id, data in manholes.items():
+            manhole_x.append(data['x'])
+            manhole_y.append(data['y'])
+            manhole_z.append(data['z'])
+            manhole_text.append(f"Manhole {manhole_id}<br>Depth: {data['depth']:.2f}m")
+
+        fig.add_trace(go.Scatter3d(
+            x=manhole_x,
+            y=manhole_y,
+            z=manhole_z,
+            mode='markers',
+            marker=dict(
+                size=8,
+                color='black',
+                symbol='square'
+            ),
+            text=manhole_text,
+            hoverinfo='text',
+            name='Manholes'
+        ))
+
+    # Add pipes and connections
+    if show_pipes:
+        # Calculate pipe endpoints for original pipes
+        pipe_endpoints = []
+        for pipe in pipes:
+            if 'is_connection' in pipe:
+                # For connection pipes, use the pre-calculated endpoints
+                pipe_endpoints.append({
+                    'start': pipe['start_point'],
+                    'end': pipe['end_point'],
+                    'type': pipe['type'],
+                    'diameter': pipe['diameter'],
+                    'is_connection': True,
+                    'pipe_number': pipe['pipe_number']
+                })
+            else:
+                # For regular pipes, calculate endpoints based on direction and length
+                start_point = pipe['start_point']
+                end_point = (
+                    start_point[0] + pipe['direction'][0] * params['pipe_length'],
+                    start_point[1] + pipe['direction'][1] * params['pipe_length'],
+                    start_point[2]
+                )
+                pipe_endpoints.append({
+                    'start': start_point,
+                    'end': end_point,
+                    'type': pipe['type'],
+                    'diameter': pipe['diameter'],
+                    'is_connection': False,
+                    'pipe_number': pipe['pipe_number']
+                })
+        
+        # Group pipes by type
+        pipe_groups = defaultdict(list)
+        for pipe in pipe_endpoints:
+            if selected_utilities is None or pipe['type'] in selected_utilities:
+                pipe_groups[pipe['type']].append(pipe)
+
+        # Add pipes by type
+        for pipe_type, pipes_of_type in pipe_groups.items():
+            for pipe in pipes_of_type:
+                try:
+                    min_width = 2
+                    max_width = 10
+                    if pd.isna(pipe['diameter']) or pipe['diameter'] <= 0:
+                        line_width = min_width
+                    else:
+                        line_width = min(max_width, max(min_width, pipe['diameter'] * 50))
+                except:
+                    line_width = min_width
+
+                line_style = 'dot' if pipe.get('is_connection', False) else 'solid'
+
+                fig.add_trace(go.Scatter3d(
+                    x=[pipe['start'][0], pipe['end'][0]],
+                    y=[pipe['start'][1], pipe['end'][1]],
+                    z=[pipe['start'][2], pipe['end'][2]],
+                    mode='lines',
+                    line=dict(
+                        color=get_color_for_utility_type(pipe_type),
+                        width=line_width,
+                        dash=line_style
+                    ),
+                    name=f"{pipe_type} {'(Connection)' if pipe.get('is_connection', False) else ''}",
+                    hovertext=f"{pipe_type}<br>{'Connection ' if pipe.get('is_connection', False) else ''}Pipe: {pipe['pipe_number']}<br>Diameter: {pipe['diameter']*1000:.1f}mm",
+                    hoverinfo='text'
+                ))
+
+    # Update layout
+    fig.update_layout(
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z',
+            aspectmode='data'
+        ),
+        showlegend=True,
+        title='3D Pipe Network Visualization',
+        height=800,
+        legend=dict(
+            groupclick="toggleitem"
+        )
+    )
+
+    return fig
+
 def process_data(df, params):
     cleaned_data = clean_data(df)
     if cleaned_data is None:
@@ -379,11 +566,116 @@ def process_data(df, params):
                     'direction': (dx, dy, 0),
                     'type': str(row['Type of Utility']),
                     'diameter': diameter,
-                    'pipe_number': pipe_number
+                    'pipe_number': pipe_number,
+                    'manhole_id': str(manhole_id)  # Add manhole ID for reference
                 })
             except Exception as e:
                 st.warning(f"Skipping invalid pipe data: {str(e)}")
                 continue
+
+    # Calculate connecting pipes
+    connecting_pipes = []
+    processed_pairs = set()  # To avoid duplicate connections
+
+    # For each pipe endpoint
+    for pipe1 in pipes:
+        start1 = pipe1['start_point']
+        end1 = (
+            start1[0] + pipe1['direction'][0] * params['pipe_length'],
+            start1[1] + pipe1['direction'][1] * params['pipe_length'],
+            start1[2]
+        )
+
+        # Check for connections with other pipes
+        for pipe2 in pipes:
+            if pipe1 == pipe2:
+                continue
+
+            # Create a unique identifier for this pipe pair
+            pair_id = tuple(sorted([pipe1['pipe_number'], pipe2['pipe_number']]))
+            if pair_id in processed_pairs:
+                continue
+
+            # Skip if pipes are from the same manhole
+            if pipe1['manhole_id'] == pipe2['manhole_id']:
+                continue
+
+            start2 = pipe2['start_point']
+            end2 = (
+                start2[0] + pipe2['direction'][0] * params['pipe_length'],
+                start2[1] + pipe2['direction'][1] * params['pipe_length'],
+                start2[2]
+            )
+
+            # Calculate distances between pipe endpoints
+            distances = [
+                (math.sqrt((end1[0] - start2[0])**2 + (end1[1] - start2[1])**2), end1, start2),
+                (math.sqrt((start1[0] - end2[0])**2 + (start1[1] - end2[1])**2), start1, end2),
+                (math.sqrt((end1[0] - end2[0])**2 + (end1[1] - end2[1])**2), end1, end2),
+                (math.sqrt((start1[0] - start2[0])**2 + (start1[1] - start2[1])**2), start1, start2)
+            ]
+
+            min_distance, point1, point2 = min(distances, key=lambda x: x[0])
+
+            # Check if pipes should be connected based on type and distance
+            max_distance = (params['pipe_to_pipe_diff_material_max_distance'] 
+                          if pipe1['type'] != pipe2['type'] 
+                          else params['pipe_to_pipe_max_distance'])
+            
+            tolerance = (params['pipe_to_pipe_diff_tolerance'] 
+                       if pipe1['type'] != pipe2['type'] 
+                       else params['pipe_to_pipe_tolerance'])
+
+            if min_distance <= max_distance:
+                # Calculate azimuth between points
+                dx = point2[0] - point1[0]
+                dy = point2[1] - point1[1]
+                azimuth = math.degrees(math.atan2(dx, dy)) % 360
+
+                # Calculate azimuth difference with both pipes
+                azimuth1 = math.degrees(math.atan2(pipe1['direction'][0], pipe1['direction'][1])) % 360
+                azimuth2 = math.degrees(math.atan2(pipe2['direction'][0], pipe2['direction'][1])) % 360
+                
+                angle_diff1 = min(abs(azimuth - azimuth1), abs(360 - abs(azimuth - azimuth1)))
+                angle_diff2 = min(abs(azimuth - azimuth2), abs(360 - abs(azimuth - azimuth2)))
+
+                # Check if the connection angle is within tolerance for both pipes
+                if angle_diff1 <= tolerance and angle_diff2 <= tolerance:
+                    connecting_pipes.append({
+                        'start_point': point1,
+                        'end_point': point2,
+                        'type': pipe1['type'],
+                        'diameter': min(pipe1['diameter'], pipe2['diameter']),
+                        'is_connection': True,
+                        'pipe_number': f"CONN_{pipe1['pipe_number']}_{pipe2['pipe_number']}",
+                        'connected_pipes': [pipe1['pipe_number'], pipe2['pipe_number']],
+                        'connection_distance': min_distance,
+                        'connection_angle1': angle_diff1,
+                        'connection_angle2': angle_diff2
+                    })
+                    
+                    processed_pairs.add(pair_id)
+
+    # Add connecting pipes to the main pipes list
+    pipes.extend(connecting_pipes)
+
+    # Log connection statistics
+    if connecting_pipes:
+        st.info(f"Found {len(connecting_pipes)} valid pipe connections")
+        
+        # Create detailed connection report
+        connection_details = pd.DataFrame([{
+            'Connection ID': p['pipe_number'],
+            'Connected Pipes': ', '.join(p['connected_pipes']),
+            'Distance': f"{p['connection_distance']:.2f}m",
+            'Angle 1': f"{p['connection_angle1']:.1f}°",
+            'Angle 2': f"{p['connection_angle2']:.1f}°",
+            'Utility Type': p['type'],
+            'Diameter': f"{p['diameter']*1000:.1f}mm"
+        } for p in connecting_pipes])
+        
+        with st.expander("View Connection Details"):
+            st.dataframe(connection_details)
 
     return manholes, pipes
 

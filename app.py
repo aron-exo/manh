@@ -16,13 +16,16 @@ def generate_sample_data():
 
     pipes = []
     for i, (mh_id, mh_data) in enumerate(manholes.items()):
+        direction_x = np.random.uniform(-1, 1)
+        direction_y = np.random.uniform(-1, 1)
+        direction_z = np.random.uniform(-0.5, 0.5)
         pipes.append({
             "start_x": mh_data["x"],
             "start_y": mh_data["y"],
             "start_z": mh_data["z"],
-            "end_x": mh_data["x"] + np.random.randint(-20, 20),
-            "end_y": mh_data["y"] + np.random.randint(-20, 20),
-            "end_z": mh_data["z"] - np.random.randint(1, 5),
+            "direction_x": direction_x,
+            "direction_y": direction_y,
+            "direction_z": direction_z,
         })
 
     return manholes, pipes
@@ -31,9 +34,8 @@ def generate_sample_data():
 st.title("Dynamic 3D Pipe Network Visualization")
 
 # Sidebar for parameters
-st.sidebar.header("Connection Parameters")
-pipe_to_pipe_max_distance = st.sidebar.slider("Pipe-to-Pipe Max Distance", 10, 200, 100)
-pipe_to_manhole_max_distance = st.sidebar.slider("Pipe-to-Manhole Max Distance", 10, 50, 25)
+st.sidebar.header("Pipe Length Adjustment")
+pipe_length = st.sidebar.slider("Pipe Length", 1, 50, 10)  # Slider to adjust pipe length
 
 # Load or generate data
 manholes, pipes = generate_sample_data()
@@ -52,22 +54,20 @@ for mh_id, mh_data in manholes.items():
         name=f"Manhole {mh_id}"
     ))
 
-# Add pipes dynamically based on slider values
+# Add pipes dynamically based on the pipe_length slider
 for pipe in pipes:
-    # Calculate distance for filtering
-    distance = np.sqrt(
-        (pipe["end_x"] - pipe["start_x"])**2 +
-        (pipe["end_y"] - pipe["start_y"])**2
-    )
-    if distance <= pipe_to_pipe_max_distance:  # Filter dynamically based on slider
-        fig.add_trace(go.Scatter3d(
-            x=[pipe["start_x"], pipe["end_x"]],
-            y=[pipe["start_y"], pipe["end_y"]],
-            z=[pipe["start_z"], pipe["end_z"]],
-            mode="lines",
-            line=dict(width=4, color="red"),
-            name="Pipe"
-        ))
+    end_x = pipe["start_x"] + pipe["direction_x"] * pipe_length
+    end_y = pipe["start_y"] + pipe["direction_y"] * pipe_length
+    end_z = pipe["start_z"] + pipe["direction_z"] * pipe_length
+
+    fig.add_trace(go.Scatter3d(
+        x=[pipe["start_x"], end_x],
+        y=[pipe["start_y"], end_y],
+        z=[pipe["start_z"], end_z],
+        mode="lines",
+        line=dict(width=4, color="red"),
+        name="Pipe"
+    ))
 
 # Configure the layout
 fig.update_layout(

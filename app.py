@@ -55,7 +55,7 @@ def clean_data(df):
         'Exit Azimuth of Utility (0-360)': 'Exit Azimuth of Utility',
         'Material of the Utility': 'Material of the Utility',
         'MANHOLE NUMBER': 'exoTag',
-        'PIPE NUMBER': 'pipeTag'  # Add pipe number mapping
+        'PIPE NUMBER': 'pipeTag'
     }
     
     # Rename columns
@@ -64,10 +64,11 @@ def clean_data(df):
     # Remove rows where both X and Y are 0 or missing
     df = df[~((df['X'].fillna(0) == 0) & (df['Y'].fillna(0) == 0))]
     
-    # Filter out rows without pipe numbers
+    # Filter out rows without pipe numbers (handling both numeric and string values)
     if 'pipeTag' in df.columns:
-        # Remove rows where pipeTag is null, empty string, or just whitespace
-        df = df[df['pipeTag'].notna() & (df['pipeTag'].str.strip() != '')]
+        # Convert pipeTag to string and handle NaN values
+        df['pipeTag'] = df['pipeTag'].astype(str)
+        df = df[df['pipeTag'].notna() & (df['pipeTag'] != 'nan') & (df['pipeTag'].str.strip() != '')]
     else:
         st.error("PIPE NUMBER column not found in the Excel file. Please check the data format.")
         return None
@@ -92,7 +93,7 @@ def clean_data(df):
             ))
     
     # Ensure non-numeric columns are strings and remove empty rows
-    string_columns = ['Type of Utility', 'Material of the Utility', 'exoTag', 'pipeTag']
+    string_columns = ['Type of Utility', 'Material of the Utility', 'exoTag']
     for col in string_columns:
         if col in df.columns:
             df[col] = df[col].fillna('Unknown').astype(str)
@@ -344,7 +345,8 @@ def process_data(df, params):
         for _, row in manhole_group.iterrows():
             try:
                 # Skip rows without pipe numbers
-                if pd.isna(row['pipeTag']) or str(row['pipeTag']).strip() == '':
+                pipe_number = str(row['pipeTag']).strip()
+                if pipe_number == '' or pipe_number == 'nan':
                     continue
                     
                 if pd.isna(row['Exit Azimuth of Utility']):
@@ -377,7 +379,7 @@ def process_data(df, params):
                     'direction': (dx, dy, 0),
                     'type': str(row['Type of Utility']),
                     'diameter': diameter,
-                    'pipe_number': str(row['pipeTag'])  # Add pipe number to the pipe data
+                    'pipe_number': pipe_number
                 })
             except Exception as e:
                 st.warning(f"Skipping invalid pipe data: {str(e)}")

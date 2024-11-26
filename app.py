@@ -958,7 +958,7 @@ if uploaded_file is not None:
                             if st.button(f"{view_name} View"):
                                 st.session_state.camera_state['view_mode'] = view_name
                                 st.session_state.camera_state['custom_camera'] = camera_settings.copy()
-                                st.experimental_rerun()
+                                st.rerun()
             
                     # Show current view mode
                     if st.session_state.camera_state['view_mode']:

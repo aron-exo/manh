@@ -501,7 +501,19 @@ def create_3d_visualization(manholes, pipes, params, show_manholes=True, show_pi
 
     return fig
 
+# At the top of your file, let's make sure params are properly defined
 def process_data(df, params):
+    # First, ensure params has all required fields
+    pipe_params = {
+        'pipe_length': params.get('pipe_length', 10),  # Default 10m if not specified
+        'pipe_to_pipe_max_distance': params.get('pipe_to_pipe_max_distance', 100),
+        'pipe_to_pipe_tolerance': params.get('pipe_to_pipe_tolerance', 20),
+        'pipe_to_pipe_diff_material_max_distance': params.get('pipe_to_pipe_diff_material_max_distance', 50),
+        'pipe_to_pipe_diff_tolerance': params.get('pipe_to_pipe_diff_tolerance', 20),
+        'pipe_to_manhole_max_distance': params.get('pipe_to_manhole_max_distance', 25),
+        'pipe_to_manhole_tolerance': params.get('pipe_to_manhole_tolerance', 10)
+    }
+
     cleaned_data = clean_data(df)
     if cleaned_data is None:
         return None, None
@@ -567,7 +579,7 @@ def process_data(df, params):
                     'type': str(row['Type of Utility']),
                     'diameter': diameter,
                     'pipe_number': pipe_number,
-                    'manhole_id': str(manhole_id)  # Add manhole ID for reference
+                    'manhole_id': str(manhole_id)
                 })
             except Exception as e:
                 st.warning(f"Skipping invalid pipe data: {str(e)}")
@@ -581,8 +593,8 @@ def process_data(df, params):
     for pipe1 in pipes:
         start1 = pipe1['start_point']
         end1 = (
-            start1[0] + pipe1['direction'][0] * params['pipe_length'],
-            start1[1] + pipe1['direction'][1] * params['pipe_length'],
+            start1[0] + pipe1['direction'][0] * pipe_params['pipe_length'],
+            start1[1] + pipe1['direction'][1] * pipe_params['pipe_length'],
             start1[2]
         )
 
@@ -602,8 +614,8 @@ def process_data(df, params):
 
             start2 = pipe2['start_point']
             end2 = (
-                start2[0] + pipe2['direction'][0] * params['pipe_length'],
-                start2[1] + pipe2['direction'][1] * params['pipe_length'],
+                start2[0] + pipe2['direction'][0] * pipe_params['pipe_length'],
+                start2[1] + pipe2['direction'][1] * pipe_params['pipe_length'],
                 start2[2]
             )
 
@@ -618,13 +630,13 @@ def process_data(df, params):
             min_distance, point1, point2 = min(distances, key=lambda x: x[0])
 
             # Check if pipes should be connected based on type and distance
-            max_distance = (params['pipe_to_pipe_diff_material_max_distance'] 
+            max_distance = (pipe_params['pipe_to_pipe_diff_material_max_distance'] 
                           if pipe1['type'] != pipe2['type'] 
-                          else params['pipe_to_pipe_max_distance'])
+                          else pipe_params['pipe_to_pipe_max_distance'])
             
-            tolerance = (params['pipe_to_pipe_diff_tolerance'] 
+            tolerance = (pipe_params['pipe_to_pipe_diff_tolerance'] 
                        if pipe1['type'] != pipe2['type'] 
-                       else params['pipe_to_pipe_tolerance'])
+                       else pipe_params['pipe_to_pipe_tolerance'])
 
             if min_distance <= max_distance:
                 # Calculate azimuth between points

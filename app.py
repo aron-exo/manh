@@ -9,6 +9,7 @@ import logging
 import json
 from io import StringIO
 from collections import defaultdict
+from copy import deepcopy
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -134,7 +135,11 @@ def calculate_pipe_endpoints(manholes, pipes, pipe_length):
         })
     return pipe_endpoints
 
+if 'camera_position' not in st.session_state:
+    st.session_state.camera_position = None
+
 def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, show_pipes=True, selected_utilities=None):
+    fig = go.Figure()
     """
     Create 3D visualization of the pipe network.
     
@@ -248,24 +253,28 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
                     hoverinfo='text'
                 ))
 
-    # Update layout
-    fig.update_layout(
-        scene=dict(
-            xaxis_title='X',
-            yaxis_title='Y',
-            zaxis_title='Z',
-            aspectmode='data'
-        ),
-        showlegend=True,
-        title='3D Pipe Network Visualization',
-        height=800,
-        legend=dict(
-            groupclick="toggleitem"
-        )
-    )
+    layout_dict = {
+        'scene': {
+            'xaxis_title': 'X',
+            'yaxis_title': 'Y',
+            'zaxis_title': 'Z',
+            'aspectmode': 'data'
+        },
+        'showlegend': True,
+        'title': '3D Pipe Network Visualization',
+        'height': 800,
+        'legend': {
+            'groupclick': "toggleitem"
+        }
+    }
+
+    # If we have a saved camera position, use it
+    if st.session_state.camera_position is not None:
+        layout_dict['scene']['camera'] = st.session_state.camera_position
+
+    fig.update_layout(**layout_dict)
 
     return fig
-
 def create_elevation_profile(manholes, pipes):
     fig = go.Figure()
     
@@ -901,8 +910,23 @@ if uploaded_file is not None:
                     show_pipes,
                     selected_utilities
                 )
-                st.plotly_chart(fig, use_container_width=True, key="3d_view")
-
+            
+                # Add a callback to save the camera position
+                fig.update_layout({
+                    'uirevision': True  # This helps maintain zoom/pan state
+                })
+            
+                # Display the plot
+                plotly_chart = st.plotly_chart(
+                    fig, 
+                    use_container_width=True, 
+                    key="3d_view"
+                )
+                
+                # Save camera position after any interaction
+                if fig.layout.scene.camera:
+                    st.session_state.camera_position = fig.layout.scene.camera
+            
                 # Display current visualization parameters
                 with st.expander("Current Parameters"):
                     st.write({

@@ -15,6 +15,47 @@ import plotly.graph_objects as go
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+if 'camera' not in st.session_state:
+    st.session_state.camera = dict(
+        up=dict(x=0, y=0, z=1),      
+        center=dict(x=0, y=0, z=0),   
+        eye=dict(x=1.25, y=1.25, z=1.25)  
+    )
+
+# Define standard views
+VIEWS = {
+    "Top": {
+        'up': dict(x=0, y=1, z=0),
+        'center': dict(x=0, y=0, z=0),
+        'eye': dict(x=0, y=0, z=2)
+    },
+    "Front": {
+        'up': dict(x=0, y=0, z=1),
+        'center': dict(x=0, y=0, z=0),
+        'eye': dict(x=0, y=2, z=0)
+    },
+    "Side": {
+        'up': dict(x=0, y=0, z=1),
+        'center': dict(x=0, y=0, z=0),
+        'eye': dict(x=2, y=0, z=0)
+    },
+    "Isometric": {
+        'up': dict(x=0, y=0, z=1),
+        'center': dict(x=0, y=0, z=0),
+        'eye': dict(x=1.25, y=1.25, z=1.25)
+    }
+}
+
+# Store current view mode
+if 'current_view' not in st.session_state:
+    st.session_state.current_view = None
+
+def update_view(view_name=None):
+    if view_name:
+        st.session_state.camera = VIEWS[view_name].copy()
+        st.session_state.current_view = view_name
+    st.rerun()
+
 def validate_numeric(value, default=0.0, allow_zero=True):
     """
     Validate and convert numeric values with enhanced validation.
@@ -136,30 +177,12 @@ def calculate_pipe_endpoints(manholes, pipes, pipe_length):
         })
     return pipe_endpoints
 
-if 'camera' not in st.session_state:
-    st.session_state.camera = dict(
-        up=dict(x=0, y=0, z=1),      # Default up vector points along z-axis
-        center=dict(x=0, y=0, z=0),   # Default center (no translation)
-        eye=dict(x=1.25, y=1.25, z=1.25)  # Default camera position
-    )
 
 def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, show_pipes=True, selected_utilities=None):
     fig = go.Figure()
-    """
-    Create 3D visualization of the pipe network.
-    
-    Args:
-        manholes: Dictionary of manhole data
-        pipes: List of pipe data
-        pipe_length: Length of pipes (in meters)
-        show_manholes: Boolean to show/hide manholes
-        show_pipes: Boolean to show/hide pipes
-        selected_utilities: List of utility types to display
-    """
-    fig = go.Figure()
 
     # Add manholes
-    if show_manholes:
+    if show_manholes and manholes:
         manhole_x = []
         manhole_y = []
         manhole_z = []
@@ -186,39 +209,32 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
             name='Manholes'
         ))
 
-    # Add pipes and connections
-    if show_pipes:
-        # Group pipes by type
+    # Add pipes
+    if show_pipes and pipes:
         pipe_groups = defaultdict(list)
         
         for pipe in pipes:
             if selected_utilities is None or pipe['type'] in selected_utilities:
-                if 'is_connection' in pipe:
-                    # For connection pipes, use the pre-calculated endpoints
-                    pipe_data = {
-                        'start': pipe['start_point'],
-                        'end': pipe['end_point'],
-                        'type': pipe['type'],
-                        'diameter': pipe['diameter'],
-                        'is_connection': True,
-                        'pipe_number': pipe['pipe_number']
-                    }
+                start_point = pipe['start_point']
+                
+                if 'is_connection' in pipe and pipe['is_connection']:
+                    end_point = pipe['end_point']
                 else:
-                    # For regular pipes, calculate endpoints based on direction and length
-                    start_point = pipe['start_point']
+                    direction = pipe['direction']
                     end_point = (
-                        start_point[0] + pipe['direction'][0] * pipe_length,
-                        start_point[1] + pipe['direction'][1] * pipe_length,
+                        start_point[0] + direction[0] * float(pipe_length),
+                        start_point[1] + direction[1] * float(pipe_length),
                         start_point[2]
                     )
-                    pipe_data = {
-                        'start': start_point,
-                        'end': end_point,
-                        'type': pipe['type'],
-                        'diameter': pipe['diameter'],
-                        'is_connection': False,
-                        'pipe_number': pipe['pipe_number']
-                    }
+
+                pipe_data = {
+                    'start': start_point,
+                    'end': end_point,
+                    'type': pipe['type'],
+                    'diameter': pipe['diameter'],
+                    'is_connection': pipe.get('is_connection', False),
+                    'pipe_number': pipe['pipe_number']
+                }
                 pipe_groups[pipe['type']].append(pipe_data)
 
         # Add pipes by type
@@ -234,11 +250,11 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
                 except:
                     line_width = min_width
 
-                line_style = 'dot' if pipe.get('is_connection', False) else 'solid'
+                line_style = 'dot' if pipe['is_connection'] else 'solid'
                 
                 hover_text = (
                     f"{pipe_type}<br>"
-                    f"{'Connection ' if pipe.get('is_connection', False) else ''}"
+                    f"{'Connection ' if pipe['is_connection'] else ''}"
                     f"Pipe: {pipe['pipe_number']}<br>"
                     f"Diameter: {pipe['diameter']*1000:.1f}mm"
                 )
@@ -253,7 +269,7 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
                         width=line_width,
                         dash=line_style
                     ),
-                    name=f"{pipe_type} {'(Connection)' if pipe.get('is_connection', False) else ''}",
+                    name=f"{pipe_type} {'(Connection)' if pipe['is_connection'] else ''}",
                     hovertext=hover_text,
                     hoverinfo='text'
                 ))
@@ -265,14 +281,13 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
             yaxis_title='Y',
             zaxis_title='Z',
             aspectmode='data',
-            camera=st.session_state.camera,
-            dragmode='orbit'
+            camera=st.session_state.camera
         ),
         showlegend=True,
         title='3D Pipe Network Visualization',
         height=800,
         legend=dict(groupclick="toggleitem"),
-        uirevision=True  # Maintain view state
+        uirevision=st.session_state.current_view if st.session_state.current_view else True
     )
 
     return fig
@@ -439,134 +454,6 @@ def calculate_pipe_connections(manholes, pipes, params):
                 processed_pairs.add(pair_id)
 
     return connected_pipes
-
-def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, show_pipes=True, selected_utilities=None):
-    """
-    Create 3D visualization of the pipe network.
-    
-    Args:
-        manholes: Dictionary of manhole data
-        pipes: List of pipe data
-        pipe_length: Integer/Float value for pipe length in meters
-        show_manholes: Boolean to show/hide manholes
-        show_pipes: Boolean to show/hide pipes
-        selected_utilities: List of utility types to display
-    """
-    fig = go.Figure()
-
-    # Add manholes
-    if show_manholes and manholes:
-        manhole_x = []
-        manhole_y = []
-        manhole_z = []
-        manhole_text = []
-        
-        for manhole_id, data in manholes.items():
-            manhole_x.append(data['x'])
-            manhole_y.append(data['y'])
-            manhole_z.append(data['z'])
-            manhole_text.append(f"Manhole {manhole_id}<br>Depth: {data['depth']:.2f}m")
-
-        fig.add_trace(go.Scatter3d(
-            x=manhole_x,
-            y=manhole_y,
-            z=manhole_z,
-            mode='markers',
-            marker=dict(
-                size=8,
-                color='black',
-                symbol='square'
-            ),
-            text=manhole_text,
-            hoverinfo='text',
-            name='Manholes'
-        ))
-
-    # Add pipes
-    if show_pipes and pipes:
-        # Group pipes by type
-        pipe_groups = defaultdict(list)
-        
-        for pipe in pipes:
-            if selected_utilities is None or pipe['type'] in selected_utilities:
-                start_point = pipe['start_point']
-                
-                if 'is_connection' in pipe and pipe['is_connection']:
-                    # For connection pipes, use the pre-calculated endpoints
-                    end_point = pipe['end_point']
-                else:
-                    # For regular pipes, calculate endpoints based on direction and length
-                    direction = pipe['direction']
-                    end_point = (
-                        start_point[0] + direction[0] * float(pipe_length),
-                        start_point[1] + direction[1] * float(pipe_length),
-                        start_point[2]
-                    )
-
-                pipe_data = {
-                    'start': start_point,
-                    'end': end_point,
-                    'type': pipe['type'],
-                    'diameter': pipe['diameter'],
-                    'is_connection': pipe.get('is_connection', False),
-                    'pipe_number': pipe['pipe_number']
-                }
-                pipe_groups[pipe['type']].append(pipe_data)
-
-        # Add pipes by type
-        for pipe_type, pipes_of_type in pipe_groups.items():
-            for pipe in pipes_of_type:
-                try:
-                    min_width = 2
-                    max_width = 10
-                    if pd.isna(pipe['diameter']) or pipe['diameter'] <= 0:
-                        line_width = min_width
-                    else:
-                        line_width = min(max_width, max(min_width, pipe['diameter'] * 50))
-                except:
-                    line_width = min_width
-
-                line_style = 'dot' if pipe['is_connection'] else 'solid'
-                
-                hover_text = (
-                    f"{pipe_type}<br>"
-                    f"{'Connection ' if pipe['is_connection'] else ''}"
-                    f"Pipe: {pipe['pipe_number']}<br>"
-                    f"Diameter: {pipe['diameter']*1000:.1f}mm"
-                )
-
-                fig.add_trace(go.Scatter3d(
-                    x=[pipe['start'][0], pipe['end'][0]],
-                    y=[pipe['start'][1], pipe['end'][1]],
-                    z=[pipe['start'][2], pipe['end'][2]],
-                    mode='lines',
-                    line=dict(
-                        color=get_color_for_utility_type(pipe_type),
-                        width=line_width,
-                        dash=line_style
-                    ),
-                    name=f"{pipe_type} {'(Connection)' if pipe['is_connection'] else ''}",
-                    hovertext=hover_text,
-                    hoverinfo='text'
-                ))
-
-    # Update layout
-    fig.update_layout(
-        scene=dict(
-            xaxis_title='X',
-            yaxis_title='Y',
-            zaxis_title='Z',
-            aspectmode='data'
-        ),
-        showlegend=True,
-        title='3D Pipe Network Visualization',
-        height=800,
-        legend=dict(
-            groupclick="toggleitem"
-        )
-    )
-
-    return fig
 
 # At the top of your file, let's make sure params are properly defined
 def process_data(df, params):
@@ -917,114 +804,45 @@ if uploaded_file is not None:
                 # Camera controls in an expander
                 with st.expander("📷 Camera Controls", expanded=True):
                     # Standard view presets
+                    st.write("Standard Views:")
                     cols = st.columns(4)
-                    with cols[0]:
-                        if st.button("Top View"):
-                            st.session_state.camera = dict(
-                                up=dict(x=0, y=1, z=0),
-                                center=dict(x=0, y=0, z=0),
-                                eye=dict(x=0, y=0, z=2)
-                            )
-                            update_view()
-                    with cols[1]:
-                        if st.button("Front View"):
-                            st.session_state.camera = dict(
-                                up=dict(x=0, y=0, z=1),
-                                center=dict(x=0, y=0, z=0),
-                                eye=dict(x=0, y=2, z=0)
-                            )
-                            update_view()
-                    with cols[2]:
-                        if st.button("Side View"):
-                            st.session_state.camera = dict(
-                                up=dict(x=0, y=0, z=1),
-                                center=dict(x=0, y=0, z=0),
-                                eye=dict(x=2, y=0, z=0)
-                            )
-                            update_view()
-                    with cols[3]:
-                        if st.button("Isometric"):
-                            st.session_state.camera = dict(
-                                up=dict(x=0, y=0, z=1),
-                                center=dict(x=0, y=0, z=0),
-                                eye=dict(x=1.25, y=1.25, z=1.25)
-                            )
-                            update_view()
+                    for idx, (view_name, _) in enumerate(VIEWS.items()):
+                        with cols[idx]:
+                            if st.button(f"{view_name} View"):
+                                update_view(view_name)
             
-                    # Eye position controls
-                    st.write("Camera Position (Eye):")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        new_eye_x = st.slider("Eye X", -5.0, 5.0, 
-                            value=float(st.session_state.camera['eye']['x']), 
-                            key='eye_x')
-                        if new_eye_x != st.session_state.camera['eye']['x']:
-                            st.session_state.camera['eye']['x'] = new_eye_x
-                            update_view()
-                    with col2:
-                        new_eye_y = st.slider("Eye Y", -5.0, 5.0, 
-                            value=float(st.session_state.camera['eye']['y']),
-                            key='eye_y')
-                        if new_eye_y != st.session_state.camera['eye']['y']:
-                            st.session_state.camera['eye']['y'] = new_eye_y
-                            update_view()
-                    with col3:
-                        new_eye_z = st.slider("Eye Z", -5.0, 5.0, 
-                            value=float(st.session_state.camera['eye']['z']),
-                            key='eye_z')
-                        if new_eye_z != st.session_state.camera['eye']['z']:
-                            st.session_state.camera['eye']['z'] = new_eye_z
-                            update_view()
-            
-                    # Up vector controls
-                    st.write("Up Direction:")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        new_up_x = st.slider("Up X", -1.0, 1.0, 
-                            value=float(st.session_state.camera['up']['x']),
-                            key='up_x')
-                        if new_up_x != st.session_state.camera['up']['x']:
-                            st.session_state.camera['up']['x'] = new_up_x
-                            update_view()
-                    with col2:
-                        new_up_y = st.slider("Up Y", -1.0, 1.0, 
-                            value=float(st.session_state.camera['up']['y']),
-                            key='up_y')
-                        if new_up_y != st.session_state.camera['up']['y']:
-                            st.session_state.camera['up']['y'] = new_up_y
-                            update_view()
-                    with col3:
-                        new_up_z = st.slider("Up Z", -1.0, 1.0, 
-                            value=float(st.session_state.camera['up']['z']),
-                            key='up_z')
-                        if new_up_z != st.session_state.camera['up']['z']:
-                            st.session_state.camera['up']['z'] = new_up_z
-                            update_view()
-            
-                    # Center position controls
-                    st.write("Center (Look At):")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        new_center_x = st.slider("Center X", -2.0, 2.0, 
-                            value=float(st.session_state.camera['center']['x']),
-                            key='center_x')
-                        if new_center_x != st.session_state.camera['center']['x']:
-                            st.session_state.camera['center']['x'] = new_center_x
-                            update_view()
-                    with col2:
-                        new_center_y = st.slider("Center Y", -2.0, 2.0, 
-                            value=float(st.session_state.camera['center']['y']),
-                            key='center_y')
-                        if new_center_y != st.session_state.camera['center']['y']:
-                            st.session_state.camera['center']['y'] = new_center_y
-                            update_view()
-                    with col3:
-                        new_center_z = st.slider("Center Z", -2.0, 2.0, 
-                            value=float(st.session_state.camera['center']['z']),
-                            key='center_z')
-                        if new_center_z != st.session_state.camera['center']['z']:
-                            st.session_state.camera['center']['z'] = new_center_z
-                            update_view()
+                    # Show current view mode
+                    if st.session_state.current_view:
+                        st.info(f"Current View: {st.session_state.current_view}")
+                    
+                    # Manual camera controls
+                    if st.checkbox("Show Manual Camera Controls"):
+                        st.write("Note: Manual adjustments will override the standard view mode")
+                        
+                        # Eye position controls
+                        st.write("Camera Position (Eye):")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            new_eye_x = st.slider("Eye X", -5.0, 5.0, 
+                                value=float(st.session_state.camera['eye']['x']), 
+                                key='eye_x')
+                            if new_eye_x != st.session_state.camera['eye']['x']:
+                                st.session_state.camera['eye']['x'] = new_eye_x
+                                st.session_state.current_view = None  # Clear view mode when manually adjusting
+                        with col2:
+                            new_eye_y = st.slider("Eye Y", -5.0, 5.0, 
+                                value=float(st.session_state.camera['eye']['y']),
+                                key='eye_y')
+                            if new_eye_y != st.session_state.camera['eye']['y']:
+                                st.session_state.camera['eye']['y'] = new_eye_y
+                                st.session_state.current_view = None
+                        with col3:
+                            new_eye_z = st.slider("Eye Z", -5.0, 5.0, 
+                                value=float(st.session_state.camera['eye']['z']),
+                                key='eye_z')
+                            if new_eye_z != st.session_state.camera['eye']['z']:
+                                st.session_state.camera['eye']['z'] = new_eye_z
+                                st.session_state.current_view = None
             
                 # Create and display the visualization
                 fig = create_3d_visualization(
@@ -1034,14 +852,6 @@ if uploaded_file is not None:
                     show_manholes,
                     show_pipes,
                     selected_utilities
-                )
-            
-                # Make sure the camera settings are applied
-                fig.update_layout(
-                    scene=dict(
-                        camera=st.session_state.camera,
-                    ),
-                    uirevision=True
                 )
             
                 # Display the plot
@@ -1058,8 +868,11 @@ if uploaded_file is not None:
                 )
             
                 # Display current camera settings
-                with st.expander("Current Camera Settings"):
-                    st.json(st.session_state.camera)
+                with st.expander("Debug: Current Camera Settings"):
+                    st.json({
+                        "current_view": st.session_state.current_view,
+                        "camera": st.session_state.camera
+                    })
             
             with tab2:
                 st.subheader("Network Analysis")

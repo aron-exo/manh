@@ -638,59 +638,146 @@ def process_data(df, params):
                 st.warning(f"Skipping invalid pipe data for manhole {manhole_id}: {str(e)}")
                 continue
 
-    # Second pass: Create connecting pipes between manholes with valid pipes
+    # Second pass: Create connections based on different criteria
     processed_pairs = set()
     
     # Get list of manholes with valid pipes
     valid_manholes = {mid: data for mid, data in manholes.items() if data['has_valid_pipes']}
 
-    # Create connections between valid manholes
+    # Helper function to calculate bearing between points
+    def calculate_bearing(p1, p2):
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        return math.degrees(math.atan2(dx, dy)) % 360
+
+    # Helper function to calculate angle difference
+    def angle_difference(angle1, angle2):
+        diff = abs(angle1 - angle2)
+        return min(diff, 360 - diff)
+
+    # For each pipe
     for manhole1_id, manhole1_data in valid_manholes.items():
-        for manhole2_id, manhole2_data in valid_manholes.items():
-            if manhole1_id >= manhole2_id:  # Avoid duplicate connections
-                continue
+        for pipe1 in manhole_pipes[manhole1_id]:
+            # 1. Try pipe-to-pipe connection (same material and type)
+            for manhole2_id, manhole2_data in valid_manholes.items():
+                if manhole1_id >= manhole2_id:
+                    continue
 
-            pair_id = tuple(sorted([manhole1_id, manhole2_id]))
-            if pair_id in processed_pairs:
-                continue
+                pair_id = tuple(sorted([manhole1_id, manhole2_id]))
+                if pair_id in processed_pairs:
+                    continue
 
-            # Get utility types for both manholes
-            utility_types1 = set(p['type'] for p in manhole_pipes[manhole1_id])
-            utility_types2 = set(p['type'] for p in manhole_pipes[manhole2_id])
-            common_utilities = utility_types1.intersection(utility_types2)
+                for pipe2 in manhole_pipes[manhole2_id]:
+                    if pipe1['type'] == pipe2['type'] and pipe1['material'] == pipe2['material']:
+                        # Calculate distance between manholes
+                        distance = math.sqrt(
+                            (manhole1_data['x'] - manhole2_data['x'])**2 +
+                            (manhole1_data['y'] - manhole2_data['y'])**2
+                        )
 
-            if common_utilities:
-                distance = math.sqrt(
-                    (manhole1_data['x'] - manhole2_data['x'])**2 +
-                    (manhole1_data['y'] - manhole2_data['y'])**2
-                )
+                        if distance <= pipe_params['pipe_to_pipe_max_distance']:
+                            # Calculate bearings and check angles
+                            bearing = calculate_bearing(
+                                (manhole1_data['x'], manhole1_data['y']),
+                                (manhole2_data['x'], manhole2_data['y'])
+                            )
+                            angle_diff1 = angle_difference(pipe1['azimuth'], bearing)
+                            angle_diff2 = angle_difference(pipe2['azimuth'], (bearing + 180) % 360)
 
-                if distance <= pipe_params['pipe_to_manhole_max_distance']:
-                    # Create connecting pipe for each common utility type
-                    for utility_type in common_utilities:
-                        pipe1 = next((p for p in manhole_pipes[manhole1_id] if p['type'] == utility_type), None)
-                        pipe2 = next((p for p in manhole_pipes[manhole2_id] if p['type'] == utility_type), None)
-                        
-                        if pipe1 and pipe2:
-                            # Create connecting pipe
+                            if angle_diff1 <= pipe_params['pipe_to_pipe_tolerance'] and \
+                               angle_diff2 <= pipe_params['pipe_to_pipe_tolerance']:
+                                # Create connection
+                                connecting_pipe = {
+                                    'start_point': (manhole1_data['x'], manhole1_data['y'], pipe1['start_point'][2]),
+                                    'end_point': (manhole2_data['x'], manhole2_data['y'], pipe2['start_point'][2]),
+                                    'type': pipe1['type'],
+                                    'diameter': min(pipe1['diameter'], pipe2['diameter']),
+                                    'pipe_number': f"CONN_SAME_{manhole1_id}_{manhole2_id}",
+                                    'is_connection': True,
+                                    'connection_type': 'same_type',
+                                    'material': pipe1['material'],
+                                    'manhole_id': manhole1_id
+                                }
+                                pipes.append(connecting_pipe)
+                                processed_pairs.add(pair_id)
+
+            # 2. Try pipe-to-pipe connection (different material but same type)
+            if not pair_id in processed_pairs:
+                for manhole2_id, manhole2_data in valid_manholes.items():
+                    if manhole1_id >= manhole2_id:
+                        continue
+
+                    for pipe2 in manhole_pipes[manhole2_id]:
+                        if pipe1['type'] == pipe2['type'] and pipe1['material'] != pipe2['material']:
+                            distance = math.sqrt(
+                                (manhole1_data['x'] - manhole2_data['x'])**2 +
+                                (manhole1_data['y'] - manhole2_data['y'])**2
+                            )
+
+                            if distance <= pipe_params['pipe_to_pipe_diff_material_max_distance']:
+                                bearing = calculate_bearing(
+                                    (manhole1_data['x'], manhole1_data['y']),
+                                    (manhole2_data['x'], manhole2_data['y'])
+                                )
+                                angle_diff1 = angle_difference(pipe1['azimuth'], bearing)
+                                angle_diff2 = angle_difference(pipe2['azimuth'], (bearing + 180) % 360)
+
+                                if angle_diff1 <= pipe_params['pipe_to_pipe_diff_tolerance'] and \
+                                   angle_diff2 <= pipe_params['pipe_to_pipe_diff_tolerance']:
+                                    connecting_pipe = {
+                                        'start_point': (manhole1_data['x'], manhole1_data['y'], pipe1['start_point'][2]),
+                                        'end_point': (manhole2_data['x'], manhole2_data['y'], pipe2['start_point'][2]),
+                                        'type': pipe1['type'],
+                                        'diameter': min(pipe1['diameter'], pipe2['diameter']),
+                                        'pipe_number': f"CONN_DIFF_{manhole1_id}_{manhole2_id}",
+                                        'is_connection': True,
+                                        'connection_type': 'different_material',
+                                        'material': f"{pipe1['material']}-{pipe2['material']}",
+                                        'manhole_id': manhole1_id
+                                    }
+                                    pipes.append(connecting_pipe)
+                                    processed_pairs.add(pair_id)
+
+            # 3. Try pipe-to-manhole connection
+            if not pair_id in processed_pairs:
+                for manhole2_id, manhole2_data in valid_manholes.items():
+                    if manhole1_id >= manhole2_id:
+                        continue
+
+                    distance = math.sqrt(
+                        (manhole1_data['x'] - manhole2_data['x'])**2 +
+                        (manhole1_data['y'] - manhole2_data['y'])**2
+                    )
+
+                    if distance <= pipe_params['pipe_to_manhole_max_distance']:
+                        bearing = calculate_bearing(
+                            (manhole1_data['x'], manhole1_data['y']),
+                            (manhole2_data['x'], manhole2_data['y'])
+                        )
+                        angle_diff = angle_difference(pipe1['azimuth'], bearing)
+
+                        if angle_diff <= pipe_params['pipe_to_manhole_tolerance']:
                             connecting_pipe = {
                                 'start_point': (manhole1_data['x'], manhole1_data['y'], pipe1['start_point'][2]),
-                                'end_point': (manhole2_data['x'], manhole2_data['y'], pipe2['start_point'][2]),
-                                'type': utility_type,
-                                'diameter': min(pipe1['diameter'], pipe2['diameter']),
-                                'pipe_number': f"CONN_{manhole1_id}_{manhole2_id}_{utility_type}",
+                                'end_point': (manhole2_data['x'], manhole2_data['y'], pipe1['start_point'][2]),
+                                'type': pipe1['type'],
+                                'diameter': pipe1['diameter'],
+                                'pipe_number': f"CONN_MH_{manhole1_id}_{manhole2_id}",
                                 'is_connection': True,
-                                'connected_manholes': [manhole1_id, manhole2_id],
+                                'connection_type': 'to_manhole',
                                 'material': pipe1['material'],
-                                'manhole_id': manhole1_id  # For consistency with the visualization code
+                                'manhole_id': manhole1_id
                             }
                             pipes.append(connecting_pipe)
                             processed_pairs.add(pair_id)
 
-    if pipes:
-        st.info(f"Created {len([p for p in pipes if p.get('is_connection', False)])} connecting pipes between manholes")
-    else:
-        st.warning("No valid pipes were created")
+    # Log connection statistics
+    connection_types = [p.get('connection_type') for p in pipes if p.get('is_connection', False)]
+    if connection_types:
+        st.info(f"Created connections: " + 
+                f"Same type: {connection_types.count('same_type')}, " +
+                f"Different material: {connection_types.count('different_material')}, " +
+                f"To manhole: {connection_types.count('to_manhole')}")
 
     return manholes, pipes
 

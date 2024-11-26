@@ -223,35 +223,6 @@ def create_elevation_profile(manholes, pipes):
     
     return fig
 
-# And in the main app code, replace the elevation profile section with:
-
-with tab3:
-    st.subheader("Elevation Profile")
-    
-    # Add elevation controls
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        vertical_exaggeration = st.number_input(
-            "Vertical Exaggeration",
-            min_value=1,
-            max_value=10,
-            value=2
-        )
-    
-    # Create elevation profile
-    elevation_fig = create_elevation_profile(manholes, pipes)
-    
-    # Update the y-axis scale using the correct method name
-    elevation_fig.update_layout(
-        yaxis=dict(
-            scaleanchor=None,
-            scaleratio=1/vertical_exaggeration
-        )
-    )
-    
-    with col1:
-        st.plotly_chart(elevation_fig, use_container_width=True)
-
 def create_network_analysis(pipes):
     # Analyze pipe types and diameters
     pipe_types = defaultdict(int)
@@ -360,55 +331,55 @@ def process_data(df, params):
 
     return manholes, pipes
 
-# Keep all the previous imports and function definitions, then update the main app section:
-
-# Streamlit app setup
+# Streamlit app
 st.set_page_config(layout="wide", page_title="3D Pipe Network Visualization")
 
 st.title("3D Pipe Network Visualization")
 
-# Sidebar setup
+# File uploader
 uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx"])
 
 if uploaded_file is not None:
+    # Parameters in sidebar
+    st.sidebar.header("Visualization Parameters")
+    pipe_length = st.sidebar.slider("Pipe Length (m)", 1, 50, 10)
+    
+    st.sidebar.header("Connection Parameters")
+    pipe_to_pipe_max_distance = st.sidebar.slider("Pipe-to-Pipe Max Distance", 1, 200, 100)
+    pipe_to_pipe_tolerance = st.sidebar.slider("Pipe-to-Pipe Tolerance", 1, 45, 20)
+    
+    pipe_to_pipe_diff_max_distance = st.sidebar.slider("Different Material Pipe Max Distance", 1, 100, 50)
+    pipe_to_pipe_diff_tolerance = st.sidebar.slider("Different Material Pipe Tolerance", 1, 45, 20)
+    
+    pipe_to_manhole_max_distance = st.sidebar.slider("Pipe-to-Manhole Max Distance", 1, 50, 25)
+    pipe_to_manhole_tolerance = st.sidebar.slider("Pipe-to-Manhole Tolerance", 1, 30, 10)
+
+    params = {
+        'pipe_to_pipe_max_distance': pipe_to_pipe_max_distance,
+        'pipe_to_pipe_min_tolerance': pipe_to_pipe_tolerance,
+        'pipe_to_pipe_max_tolerance': pipe_to_pipe_tolerance,
+        'pipe_to_pipe_diff_material_max_distance': pipe_to_pipe_diff_max_distance,
+        'pipe_to_pipe_diff_material_min_tolerance': pipe_to_pipe_diff_tolerance,
+        'pipe_to_pipe_diff_material_max_tolerance': pipe_to_pipe_diff_tolerance,
+        'pipe_to_manhole_max_distance': pipe_to_manhole_max_distance,
+        'pipe_to_manhole_min_tolerance': pipe_to_manhole_tolerance,
+        'pipe_to_manhole_max_tolerance': pipe_to_manhole_tolerance
+    }
+
     try:
-        # Read and process data
+        # Process the uploaded file
         df = unmerge_cell_copy_top_value_to_df(uploaded_file, "English")
-        
         if df is not None:
-            # Sidebar controls
-            st.sidebar.header("Visualization Parameters")
-            pipe_length = st.sidebar.slider("Pipe Length (m)", 1, 50, 10)
-            
-            # Connection parameters
-            st.sidebar.header("Connection Parameters")
-            pipe_to_pipe_max_distance = st.sidebar.slider("Pipe-to-Pipe Max Distance", 1, 200, 100)
-            pipe_to_pipe_tolerance = st.sidebar.slider("Pipe-to-Pipe Tolerance", 1, 45, 20)
-            pipe_to_pipe_diff_max_distance = st.sidebar.slider("Different Material Pipe Max Distance", 1, 100, 50)
-            pipe_to_pipe_diff_tolerance = st.sidebar.slider("Different Material Pipe Tolerance", 1, 45, 20)
-            pipe_to_manhole_max_distance = st.sidebar.slider("Pipe-to-Manhole Max Distance", 1, 50, 25)
-            pipe_to_manhole_tolerance = st.sidebar.slider("Pipe-to-Manhole Tolerance", 1, 30, 10)
-
-            # Process data
-            params = {
-                'pipe_to_pipe_max_distance': pipe_to_pipe_max_distance,
-                'pipe_to_pipe_min_tolerance': pipe_to_pipe_tolerance,
-                'pipe_to_pipe_max_tolerance': pipe_to_pipe_tolerance,
-                'pipe_to_pipe_diff_material_max_distance': pipe_to_pipe_diff_max_distance,
-                'pipe_to_pipe_diff_material_min_tolerance': pipe_to_pipe_diff_tolerance,
-                'pipe_to_pipe_diff_material_max_tolerance': pipe_to_pipe_diff_tolerance,
-                'pipe_to_manhole_max_distance': pipe_to_manhole_max_distance,
-                'pipe_to_manhole_min_tolerance': pipe_to_manhole_tolerance,
-                'pipe_to_manhole_max_tolerance': pipe_to_manhole_tolerance
-            }
-
             manholes, pipes = process_data(df, params)
 
-            # Additional sidebar controls
+            # Visualization settings
             st.sidebar.header("Visualization Settings")
             show_manholes = st.sidebar.checkbox("Show Manholes", value=True)
+# Visualization settings (continued)
             show_pipes = st.sidebar.checkbox("Show Pipes", value=True)
             
+            # Filter utility types
+            st.sidebar.header("Utility Filters")
             utility_types = list(set(pipe['type'] for pipe in pipes))
             selected_utilities = st.sidebar.multiselect(
                 "Show Utility Types",
@@ -416,17 +387,12 @@ if uploaded_file is not None:
                 default=utility_types
             )
 
-            # Create main content area with tabs
-            tab_3d, tab_analysis, tab_elevation, tab_export = st.tabs([
-                "3D View",
-                "Network Analysis",
-                "Elevation Profile",
-                "Export"
-            ])
+            # Create tabs for different visualizations
+            tab1, tab2, tab3, tab4 = st.tabs(["3D View", "Network Analysis", "Elevation Profile", "Export"])
 
-            # 3D View Tab
-            with tab_3d:
-                fig_3d = create_3d_visualization(
+            with tab1:
+                # Create and display the 3D visualization
+                fig = create_3d_visualization(
                     manholes, 
                     pipes, 
                     pipe_length,
@@ -434,8 +400,9 @@ if uploaded_file is not None:
                     show_pipes,
                     selected_utilities
                 )
-                st.plotly_chart(fig_3d, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
 
+                # Display current visualization parameters
                 with st.expander("Current Parameters"):
                     st.write({
                         "Pipe Length": f"{pipe_length}m",
@@ -447,11 +414,11 @@ if uploaded_file is not None:
                         "Pipe-to-Manhole Tolerance": f"{pipe_to_manhole_tolerance}°"
                     })
 
-            # Network Analysis Tab
-            with tab_analysis:
+            with tab2:
                 st.subheader("Network Analysis")
                 col1, col2 = st.columns(2)
                 
+                # Create analysis visualizations
                 pipe_type_fig, diameter_fig = create_network_analysis(pipes)
                 
                 with col1:
@@ -459,49 +426,27 @@ if uploaded_file is not None:
                 with col2:
                     st.plotly_chart(diameter_fig, use_container_width=True)
 
+                # Display network metrics
                 metrics = calculate_network_metrics(manholes, pipes)
                 with st.expander("Network Metrics"):
-                    metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
-                    with metrics_col1:
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
                         st.metric("Total Manholes", metrics['total_manholes'])
                         st.metric("Total Pipes", metrics['total_pipes'])
-                    with metrics_col2:
+                    with col2:
                         st.metric("Average Manhole Depth", f"{metrics['avg_manhole_depth']:.2f} m")
                         st.metric("Average Pipe Diameter", f"{metrics['avg_pipe_diameter']:.1f} mm")
-                    with metrics_col3:
+                    with col3:
                         st.metric("Network Extent (X)", 
                                 f"{metrics['network_extent']['x_max'] - metrics['network_extent']['x_min']:.1f} m")
                         st.metric("Network Extent (Y)", 
                                 f"{metrics['network_extent']['y_max'] - metrics['network_extent']['y_min']:.1f} m")
 
-            # Elevation Profile Tab
-            with tab_elevation:
-                st.subheader("Elevation Profile")
-                
-                elev_col1, elev_col2 = st.columns([3, 1])
-                with elev_col2:
-                    vertical_exaggeration = st.number_input(
-                        "Vertical Exaggeration",
-                        min_value=1,
-                        max_value=10,
-                        value=2
-                    )
-                
-                elevation_fig = create_elevation_profile(manholes, pipes)
-                elevation_fig.update_layout(
-                    yaxis=dict(
-                        scaleanchor=None,
-                        scaleratio=1/vertical_exaggeration
-                    )
-                )
-                
-                with elev_col1:
-                    st.plotly_chart(elevation_fig, use_container_width=True)
 
-            # Export Tab
-            with tab_export:
+            with tab4:
                 st.subheader("Export Data")
                 
+                # Export options
                 export_format = st.selectbox(
                     "Export Format",
                     ["GeoJSON", "CSV", "Excel"]
@@ -509,9 +454,10 @@ if uploaded_file is not None:
                 
                 if st.button("Export Data"):
                     if export_format == "GeoJSON":
+                        # Convert network to GeoJSON
                         features = []
                         
-                        # Add manholes
+                        # Add manholes as points
                         for manhole_id, data in manholes.items():
                             features.append({
                                 "type": "Feature",
@@ -526,7 +472,7 @@ if uploaded_file is not None:
                                 }
                             })
                         
-                        # Add pipes
+                        # Add pipes as LineStrings
                         for pipe in pipes:
                             start = pipe['start_point']
                             end = (
@@ -560,19 +506,20 @@ if uploaded_file is not None:
                         )
                     
                     elif export_format == "CSV":
-                        # CSV export
+                        # Create separate DataFrames for manholes and pipes
                         manhole_df = pd.DataFrame.from_dict(manholes, orient='index')
                         pipe_df = pd.DataFrame(pipes)
                         
-                        csv_col1, csv_col2 = st.columns(2)
-                        with csv_col1:
+                        # Export both to CSV
+                        col1, col2 = st.columns(2)
+                        with col1:
                             st.download_button(
                                 "Download Manholes CSV",
                                 data=manhole_df.to_csv(index=True),
                                 file_name="manholes.csv",
                                 mime="text/csv"
                             )
-                        with csv_col2:
+                        with col2:
                             st.download_button(
                                 "Download Pipes CSV",
                                 data=pipe_df.to_csv(index=False),
@@ -581,6 +528,7 @@ if uploaded_file is not None:
                             )
                     
                     else:  # Excel
+                        # Create Excel file with multiple sheets
                         output = StringIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             pd.DataFrame.from_dict(manholes, orient='index').to_excel(
@@ -603,16 +551,23 @@ if uploaded_file is not None:
 
 else:
     st.info("Please upload an Excel file to begin visualization.")
-    
+
+    # Add example/demo section
     with st.expander("About this Application"):
         st.markdown("""
-        This application visualizes underground utility networks in 3D.
+        This application visualizes underground utility networks in 3D. 
         
         ### Features:
         - Interactive 3D visualization of manholes and pipes
         - Network analysis with statistics and charts
         - Elevation profiles
         - Data export in multiple formats
+        
+        ### How to use:
+        1. Upload an Excel file containing manhole and pipe data
+        2. Adjust visualization parameters using the sidebar controls
+        3. Explore different views using the tabs
+        4. Export the processed data in your preferred format
         
         ### Required Excel Format:
         The Excel file should contain the following columns:

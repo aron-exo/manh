@@ -902,15 +902,16 @@ if uploaded_file is not None:
             # Create tabs for different visualizations
             tab1, tab2, tab3, tab4 = st.tabs(["3D View", "Network Analysis", "Elevation Profile", "Export"])
             
+            def update_view():
+                st.rerun()
+            
+            # Initialize camera with standard parameters
             if 'camera' not in st.session_state:
                 st.session_state.camera = dict(
-                    up=dict(x=0, y=0, z=1),      # Default up vector points along z-axis
-                    center=dict(x=0, y=0, z=0),   # Default center (no translation)
-                    eye=dict(x=1.25, y=1.25, z=1.25)  # Default camera position
+                    up=dict(x=0, y=0, z=1),      
+                    center=dict(x=0, y=0, z=0),   
+                    eye=dict(x=1.25, y=1.25, z=1.25)  
                 )
-            
-            def update_view():
-                st.experimental_rerun()
             
             with tab1:
                 # Camera controls in an expander

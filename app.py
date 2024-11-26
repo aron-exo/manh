@@ -742,7 +742,7 @@ def create_manhole_connection(manhole1_data, manhole2_data, pipe1, pipe2, manhol
         'connected_manholes': [manhole1_id, manhole2_id],
         'material': pipe1['material']
     }
-# Streamlit app
+# Streamlit app section
 st.set_page_config(layout="wide", page_title="3D Pipe Network Visualization")
 
 st.title("3D Pipe Network Visualization")
@@ -801,17 +801,6 @@ if uploaded_file is not None:
                 default=utility_types
             )
 
-            # Create visualization with proper parameters
-            fig = create_3d_visualization(
-                manholes=manholes,
-                pipes=pipes,
-                pipe_length=params['pipe_length'],  # Pass pipe_length from params
-                show_manholes=show_manholes,
-                show_pipes=show_pipes,
-                selected_utilities=selected_utilities
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
             # Create tabs for different visualizations
             tab1, tab2, tab3, tab4 = st.tabs(["3D View", "Network Analysis", "Elevation Profile", "Export"])
 
@@ -825,7 +814,7 @@ if uploaded_file is not None:
                     show_pipes,
                     selected_utilities
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="3d_view")
 
                 # Display current visualization parameters
                 with st.expander("Current Parameters"):
@@ -847,9 +836,9 @@ if uploaded_file is not None:
                 pipe_type_fig, diameter_fig = create_network_analysis(pipes)
                 
                 with col1:
-                    st.plotly_chart(pipe_type_fig, use_container_width=True)
+                    st.plotly_chart(pipe_type_fig, use_container_width=True, key="pipe_type_chart")
                 with col2:
-                    st.plotly_chart(diameter_fig, use_container_width=True)
+                    st.plotly_chart(diameter_fig, use_container_width=True, key="diameter_chart")
 
                 # Display network metrics
                 metrics = calculate_network_metrics(manholes, pipes)
@@ -867,6 +856,9 @@ if uploaded_file is not None:
                         st.metric("Network Extent (Y)", 
                                 f"{metrics['network_extent']['y_max'] - metrics['network_extent']['y_min']:.1f} m")
 
+            with tab3:
+                elevation_fig = create_elevation_profile(manholes, pipes)
+                st.plotly_chart(elevation_fig, use_container_width=True, key="elevation_profile")
 
             with tab4:
                 st.subheader("Export Data")
@@ -878,97 +870,7 @@ if uploaded_file is not None:
                 )
                 
                 if st.button("Export Data"):
-                    if export_format == "GeoJSON":
-                        # Convert network to GeoJSON
-                        features = []
-                        
-                        # Add manholes as points
-                        for manhole_id, data in manholes.items():
-                            features.append({
-                                "type": "Feature",
-                                "geometry": {
-                                    "type": "Point",
-                                    "coordinates": [data['x'], data['y'], data['z']]
-                                },
-                                "properties": {
-                                    "id": manhole_id,
-                                    "type": "manhole",
-                                    "depth": data['depth']
-                                }
-                            })
-                        
-                        # Add pipes as LineStrings
-                        for pipe in pipes:
-                            start = pipe['start_point']
-                            end = (
-                                start[0] + pipe['direction'][0] * pipe_length,
-                                start[1] + pipe['direction'][1] * pipe_length,
-                                start[2]
-                            )
-                            features.append({
-                                "type": "Feature",
-                                "geometry": {
-                                    "type": "LineString",
-                                    "coordinates": [list(start), list(end)]
-                                },
-                                "properties": {
-                                    "type": "pipe",
-                                    "utility_type": pipe['type'],
-                                    "diameter": pipe['diameter']
-                                }
-                            })
-                        
-                        geojson_data = {
-                            "type": "FeatureCollection",
-                            "features": features
-                        }
-                        
-                        st.download_button(
-                            "Download GeoJSON",
-                            data=json.dumps(geojson_data, indent=2),
-                            file_name="pipe_network.geojson",
-                            mime="application/json"
-                        )
-                    
-                    elif export_format == "CSV":
-                        # Create separate DataFrames for manholes and pipes
-                        manhole_df = pd.DataFrame.from_dict(manholes, orient='index')
-                        pipe_df = pd.DataFrame(pipes)
-                        
-                        # Export both to CSV
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.download_button(
-                                "Download Manholes CSV",
-                                data=manhole_df.to_csv(index=True),
-                                file_name="manholes.csv",
-                                mime="text/csv"
-                            )
-                        with col2:
-                            st.download_button(
-                                "Download Pipes CSV",
-                                data=pipe_df.to_csv(index=False),
-                                file_name="pipes.csv",
-                                mime="text/csv"
-                            )
-                    
-                    else:  # Excel
-                        # Create Excel file with multiple sheets
-                        output = StringIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            pd.DataFrame.from_dict(manholes, orient='index').to_excel(
-                                writer, sheet_name='Manholes')
-                            pd.DataFrame(pipes).to_excel(
-                                writer, sheet_name='Pipes')
-                            pd.DataFrame([metrics]).to_excel(
-                                writer, sheet_name='Network Metrics')
-                        
-                        st.download_button(
-                            "Download Excel",
-                            data=output.getvalue(),
-                            file_name="pipe_network.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                    handle_export(export_format, manholes, pipes, metrics)
 
     except Exception as e:
         st.error(f"Error processing data: {str(e)}")

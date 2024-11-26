@@ -137,11 +137,10 @@ def calculate_pipe_endpoints(manholes, pipes, pipe_length):
     return pipe_endpoints
 
 if 'camera' not in st.session_state:
-    # Initialize with default camera position
     st.session_state.camera = dict(
-        up=dict(x=0, y=0, z=1),
-        center=dict(x=0, y=0, z=0),
-        eye=dict(x=1.25, y=1.25, z=1.25)
+        up=dict(x=0, y=0, z=1),      # Default up vector points along z-axis
+        center=dict(x=0, y=0, z=0),   # Default center (no translation)
+        eye=dict(x=1.25, y=1.25, z=1.25)  # Default camera position
     )
 
 def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, show_pipes=True, selected_utilities=None):
@@ -259,22 +258,21 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
                     hoverinfo='text'
                 ))
 
-    # Update layout with explicit camera position
+    # Update layout with camera settings
     fig.update_layout(
         scene=dict(
             xaxis_title='X',
             yaxis_title='Y',
             zaxis_title='Z',
             aspectmode='data',
-            camera=st.session_state.camera  # Use the stored camera position
+            camera=st.session_state.camera,
+            dragmode='orbit'
         ),
         showlegend=True,
         title='3D Pipe Network Visualization',
         height=800,
-        legend=dict(
-            groupclick="toggleitem"
-        ),
-        uirevision='true'  # This helps maintain other UI states
+        legend=dict(groupclick="toggleitem"),
+        uirevision=True  # Maintain view state
     )
 
     return fig
@@ -903,9 +901,94 @@ if uploaded_file is not None:
 
             # Create tabs for different visualizations
             tab1, tab2, tab3, tab4 = st.tabs(["3D View", "Network Analysis", "Elevation Profile", "Export"])
-
+            
             with tab1:
-                # Create and display the 3D visualization
+                # Camera controls in an expander
+                with st.expander("📷 Camera Controls", expanded=True):
+                    # Zoom control
+                    zoom = st.slider(
+                        "Zoom Level", 0.1, 5.0, 
+                        value=math.sqrt(sum(x**2 for x in st.session_state.camera['eye'].values())),
+                        step=0.1,
+                        help="Adjust zoom level (changes the eye vector norm)"
+                    )
+                    
+                    # Standard view presets
+                    cols = st.columns(4)
+                    with cols[0]:
+                        if st.button("Top View"):
+                            st.session_state.camera.update({
+                                'up': dict(x=0, y=1, z=0),
+                                'center': dict(x=0, y=0, z=0),
+                                'eye': dict(x=0, y=0, z=zoom)
+                            })
+                    with cols[1]:
+                        if st.button("Front View"):
+                            st.session_state.camera.update({
+                                'up': dict(x=0, y=0, z=1),
+                                'center': dict(x=0, y=0, z=0),
+                                'eye': dict(x=0, y=zoom, z=0)
+                            })
+                    with cols[2]:
+                        if st.button("Side View"):
+                            st.session_state.camera.update({
+                                'up': dict(x=0, y=0, z=1),
+                                'center': dict(x=0, y=0, z=0),
+                                'eye': dict(x=zoom, y=0, z=0)
+                            })
+                    with cols[3]:
+                        if st.button("Isometric"):
+                            norm = zoom / math.sqrt(3)
+                            st.session_state.camera.update({
+                                'up': dict(x=0, y=0, z=1),
+                                'center': dict(x=0, y=0, z=0),
+                                'eye': dict(x=norm, y=norm, z=norm)
+                            })
+            
+                    # Advanced controls in tabs
+                    camera_tab1, camera_tab2 = st.tabs(["View Position", "Center & Up"])
+                    
+                    with camera_tab1:
+                        # Eye position (normalized by zoom)
+                        st.write("Camera Position (Eye):")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            eye_x = st.slider("X", -1.0, 1.0, 
+                                st.session_state.camera['eye']['x']/zoom, 
+                                key='eye_x')
+                            st.session_state.camera['eye']['x'] = eye_x * zoom
+                        with col2:
+                            eye_y = st.slider("Y", -1.0, 1.0, 
+                                st.session_state.camera['eye']['y']/zoom,
+                                key='eye_y')
+                            st.session_state.camera['eye']['y'] = eye_y * zoom
+                        with col3:
+                            eye_z = st.slider("Z", -1.0, 1.0, 
+                                st.session_state.camera['eye']['z']/zoom,
+                                key='eye_z')
+                            st.session_state.camera['eye']['z'] = eye_z * zoom
+            
+                    with camera_tab2:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write("Center (Look At):")
+                            st.session_state.camera['center']['x'] = st.slider("Center X", -2.0, 2.0, 
+                                float(st.session_state.camera['center']['x']), 0.1, key='center_x')
+                            st.session_state.camera['center']['y'] = st.slider("Center Y", -2.0, 2.0, 
+                                float(st.session_state.camera['center']['y']), 0.1, key='center_y')
+                            st.session_state.camera['center']['z'] = st.slider("Center Z", -2.0, 2.0, 
+                                float(st.session_state.camera['center']['z']), 0.1, key='center_z')
+                        
+                        with col2:
+                            st.write("Up Direction:")
+                            st.session_state.camera['up']['x'] = st.slider("Up X", -1.0, 1.0, 
+                                float(st.session_state.camera['up']['x']), 0.1, key='up_x')
+                            st.session_state.camera['up']['y'] = st.slider("Up Y", -1.0, 1.0, 
+                                float(st.session_state.camera['up']['y']), 0.1, key='up_y')
+                            st.session_state.camera['up']['z'] = st.slider("Up Z", -1.0, 1.0, 
+                                float(st.session_state.camera['up']['z']), 0.1, key='up_z')
+            
+                # Create and display the visualization
                 fig = create_3d_visualization(
                     manholes, 
                     pipes, 
@@ -914,16 +997,6 @@ if uploaded_file is not None:
                     show_pipes,
                     selected_utilities
                 )
-            
-                # Add a callback to capture camera position changes
-                def update_camera(fig, camera):
-                    if fig is not None and fig.layout.scene.camera is not None:
-                        new_camera = fig.layout.scene.camera
-                        st.session_state.camera = dict(
-                            up=dict(x=new_camera.up.x, y=new_camera.up.y, z=new_camera.up.z),
-                            center=dict(x=new_camera.center.x, y=new_camera.center.y, z=new_camera.center.z),
-                            eye=dict(x=new_camera.eye.x, y=new_camera.eye.y, z=new_camera.eye.z)
-                        )
             
                 # Display the plot
                 st.plotly_chart(
@@ -935,43 +1008,16 @@ if uploaded_file is not None:
                         'modeBarButtonsToAdd': ['resetCameraDefault3d'],
                         'scrollZoom': True,
                         'doubleClick': 'reset+autosize'
-                    },
-                    on_change=update_camera
+                    }
                 )
             
-                # Add camera controls in expander
-                with st.expander("Camera Controls"):
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.write("Eye Position")
-                        st.session_state.camera['eye']['x'] = st.slider("Eye X", -10.0, 10.0, st.session_state.camera['eye']['x'], key='eye_x')
-                        st.session_state.camera['eye']['y'] = st.slider("Eye Y", -10.0, 10.0, st.session_state.camera['eye']['y'], key='eye_y')
-                        st.session_state.camera['eye']['z'] = st.slider("Eye Z", -10.0, 10.0, st.session_state.camera['eye']['z'], key='eye_z')
-                    
-                    with col2:
-                        st.write("Center Position")
-                        st.session_state.camera['center']['x'] = st.slider("Center X", -10.0, 10.0, st.session_state.camera['center']['x'], key='center_x')
-                        st.session_state.camera['center']['y'] = st.slider("Center Y", -10.0, 10.0, st.session_state.camera['center']['y'], key='center_y')
-                        st.session_state.camera['center']['z'] = st.slider("Center Z", -10.0, 10.0, st.session_state.camera['center']['z'], key='center_z')
-                    
-                    with col3:
-                        st.write("Up Vector")
-                        st.session_state.camera['up']['x'] = st.slider("Up X", -1.0, 1.0, st.session_state.camera['up']['x'], key='up_x')
-                        st.session_state.camera['up']['y'] = st.slider("Up Y", -1.0, 1.0, st.session_state.camera['up']['y'], key='up_y')
-                        st.session_state.camera['up']['z'] = st.slider("Up Z", -1.0, 1.0, st.session_state.camera['up']['z'], key='up_z')
-            
-                # Display current visualization parameters
-                with st.expander("Current Parameters"):
-                    st.write({
-                        "Pipe Length": f"{pipe_length}m",
-                        "Pipe-to-Pipe Distance": f"{pipe_to_pipe_max_distance}m",
-                        "Pipe-to-Pipe Tolerance": f"{pipe_to_pipe_tolerance}°",
-                        "Different Material Distance": f"{pipe_to_pipe_diff_max_distance}m",
-                        "Different Material Tolerance": f"{pipe_to_pipe_diff_tolerance}°",
-                        "Pipe-to-Manhole Distance": f"{pipe_to_manhole_max_distance}m",
-                        "Pipe-to-Manhole Tolerance": f"{pipe_to_manhole_tolerance}°"
+                # Display current camera settings if needed
+                with st.expander("Current Camera Settings"):
+                    st.json({
+                        "zoom": zoom,
+                        "camera": st.session_state.camera
                     })
-
+            
             with tab2:
                 st.subheader("Network Analysis")
                 col1, col2 = st.columns(2)

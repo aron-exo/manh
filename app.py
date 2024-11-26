@@ -54,7 +54,8 @@ def clean_data(df):
         'Diameter of the Utilities (inch)': 'Diameter of the Utilities (inch)',
         'Exit Azimuth of Utility (0-360)': 'Exit Azimuth of Utility',
         'Material of the Utility': 'Material of the Utility',
-        'MANHOLE NUMBER': 'exoTag'
+        'MANHOLE NUMBER': 'exoTag',
+        'PIPE NUMBER': 'pipeTag'  # Add pipe number mapping
     }
     
     # Rename columns
@@ -62,6 +63,14 @@ def clean_data(df):
     
     # Remove rows where both X and Y are 0 or missing
     df = df[~((df['X'].fillna(0) == 0) & (df['Y'].fillna(0) == 0))]
+    
+    # Filter out rows without pipe numbers
+    if 'pipeTag' in df.columns:
+        # Remove rows where pipeTag is null, empty string, or just whitespace
+        df = df[df['pipeTag'].notna() & (df['pipeTag'].str.strip() != '')]
+    else:
+        st.error("PIPE NUMBER column not found in the Excel file. Please check the data format.")
+        return None
     
     # Convert numeric columns with validation
     numeric_columns = {
@@ -83,7 +92,7 @@ def clean_data(df):
             ))
     
     # Ensure non-numeric columns are strings and remove empty rows
-    string_columns = ['Type of Utility', 'Material of the Utility', 'exoTag']
+    string_columns = ['Type of Utility', 'Material of the Utility', 'exoTag', 'pipeTag']
     for col in string_columns:
         if col in df.columns:
             df[col] = df[col].fillna('Unknown').astype(str)
@@ -306,6 +315,9 @@ def calculate_network_metrics(manholes, pipes):
 
 def process_data(df, params):
     cleaned_data = clean_data(df)
+    if cleaned_data is None:
+        return None, None
+        
     manholes = {}
     pipes = []
 
@@ -331,6 +343,10 @@ def process_data(df, params):
         # Create pipes for each utility in the manhole
         for _, row in manhole_group.iterrows():
             try:
+                # Skip rows without pipe numbers
+                if pd.isna(row['pipeTag']) or str(row['pipeTag']).strip() == '':
+                    continue
+                    
                 if pd.isna(row['Exit Azimuth of Utility']):
                     continue
 
@@ -360,7 +376,8 @@ def process_data(df, params):
                     'start_point': (float(x), float(y), float(z_pipe)),
                     'direction': (dx, dy, 0),
                     'type': str(row['Type of Utility']),
-                    'diameter': diameter
+                    'diameter': diameter,
+                    'pipe_number': str(row['pipeTag'])  # Add pipe number to the pipe data
                 })
             except Exception as e:
                 st.warning(f"Skipping invalid pipe data: {str(e)}")

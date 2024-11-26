@@ -1,6 +1,5 @@
 import streamlit as st
 import plotly.graph_objects as go
-import pandas as pd
 import numpy as np
 
 # Example data setup
@@ -42,7 +41,7 @@ manholes, pipes = generate_sample_data()
 # Visualization
 fig = go.Figure()
 
-# Add manholes
+# Add manholes to the plot
 for mh_id, mh_data in manholes.items():
     fig.add_trace(go.Scatter3d(
         x=[mh_data["x"]],
@@ -53,13 +52,14 @@ for mh_id, mh_data in manholes.items():
         name=f"Manhole {mh_id}"
     ))
 
-# Add pipes
+# Add pipes dynamically based on slider values
 for pipe in pipes:
+    # Calculate distance for filtering
     distance = np.sqrt(
         (pipe["end_x"] - pipe["start_x"])**2 +
         (pipe["end_y"] - pipe["start_y"])**2
     )
-    if distance <= pipe_to_pipe_max_distance:  # Apply the filter dynamically
+    if distance <= pipe_to_pipe_max_distance:  # Filter dynamically based on slider
         fig.add_trace(go.Scatter3d(
             x=[pipe["start_x"], pipe["end_x"]],
             y=[pipe["start_y"], pipe["end_y"]],
@@ -79,5 +79,5 @@ fig.update_layout(
     margin=dict(l=0, r=0, t=40, b=40)
 )
 
-# Display the figure
+# Display the dynamically updated plot
 st.plotly_chart(fig, use_container_width=True)

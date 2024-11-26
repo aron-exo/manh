@@ -15,12 +15,21 @@ import plotly.graph_objects as go
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
-if 'camera' not in st.session_state:
-    st.session_state.camera = dict(
-        up=dict(x=0, y=0, z=1),      
-        center=dict(x=0, y=0, z=0),   
-        eye=dict(x=1.25, y=1.25, z=1.25)  
-    )
+if 'camera_state' not in st.session_state:
+    st.session_state.camera_state = {
+        'view_mode': None,
+        'custom_camera': dict(
+            up=dict(x=0, y=0, z=1),      
+            center=dict(x=0, y=0, z=0),   
+            eye=dict(x=1.25, y=1.25, z=1.25)  
+        )
+    }
+
+def update_view(view_name=None):
+    if view_name:
+        st.session_state.camera_state['view_mode'] = view_name
+        st.session_state.camera_state['custom_camera'] = VIEWS[view_name].copy()
+    st.rerun()
 
 # Define standard views
 VIEWS = {
@@ -46,15 +55,7 @@ VIEWS = {
     }
 }
 
-# Store current view mode
-if 'current_view' not in st.session_state:
-    st.session_state.current_view = None
 
-def update_view(view_name=None):
-    if view_name:
-        st.session_state.camera = VIEWS[view_name].copy()
-        st.session_state.current_view = view_name
-    st.rerun()
 
 def validate_numeric(value, default=0.0, allow_zero=True):
     """
@@ -281,13 +282,14 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
             yaxis_title='Y',
             zaxis_title='Z',
             aspectmode='data',
-            camera=st.session_state.camera
+            camera=st.session_state.camera_state['custom_camera']
         ),
         showlegend=True,
         title='3D Pipe Network Visualization',
         height=800,
         legend=dict(groupclick="toggleitem"),
-        uirevision=st.session_state.current_view if st.session_state.current_view else True
+        # Use a constant uirevision to maintain view state
+        uirevision="constant"
     )
 
     return fig
@@ -714,6 +716,160 @@ def create_directional_pipe(row, x, y, z_ground_level, manhole_id):
     except Exception as e:
         st.warning(f"Error creating directional pipe: {str(e)}")
         return None
+def handle_export(export_format, manholes, pipes, metrics):
+    if export_format == "GeoJSON":
+        # Convert network to GeoJSON
+        features = []
+        
+        # Add manholes as points
+        for manhole_id, data in manholes.items():
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [data['x'], data['y'], data['z']]
+                },
+                "properties": {
+                    "id": manhole_id,
+                    "type": "manhole",
+                    "depth": data['depth']
+                }
+            })
+        
+        # Add pipes as LineStrings
+        for pipe in pipes:
+            if 'is_connection' in pipe and pipe['is_connection']:
+                coordinates = [
+                    list(pipe['start_point']),
+                    list(pipe['end_point'])
+                ]
+            else:
+                start = pipe['start_point']
+                end = (
+                    start[0] + pipe['direction'][0] * params['pipe_length'],
+                    start[1] + pipe['direction'][1] * params['pipe_length'],
+                    start[2]
+                )
+                coordinates = [list(start), list(end)]
+                
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coordinates
+                },
+                "properties": {
+                    "type": "pipe",
+                    "utility_type": pipe['type'],
+                    "diameter": pipe['diameter'],
+                    "pipe_number": pipe['pipe_number'],
+                    "is_connection": pipe.get('is_connection', False),
+                    "material": pipe.get('material', 'unknown')
+                }
+            })
+        
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": features
+        }
+        
+        st.download_button(
+            "Download GeoJSON",
+            data=json.dumps(geojson_data, indent=2),
+            file_name="pipe_network.geojson",
+            mime="application/json"
+        )
+    
+    elif export_format == "CSV":
+        # Create separate DataFrames for manholes and pipes
+        manhole_df = pd.DataFrame.from_dict(manholes, orient='index')
+        
+        # Convert pipes to DataFrame
+        pipe_data = []
+        for pipe in pipes:
+            pipe_dict = {
+                'pipe_number': pipe['pipe_number'],
+                'type': pipe['type'],
+                'diameter': pipe['diameter'],
+                'material': pipe.get('material', 'unknown'),
+                'is_connection': pipe.get('is_connection', False),
+                'start_x': pipe['start_point'][0],
+                'start_y': pipe['start_point'][1],
+                'start_z': pipe['start_point'][2]
+            }
+            
+            if 'end_point' in pipe:
+                pipe_dict.update({
+                    'end_x': pipe['end_point'][0],
+                    'end_y': pipe['end_point'][1],
+                    'end_z': pipe['end_point'][2]
+                })
+            
+            pipe_data.append(pipe_dict)
+        
+        pipe_df = pd.DataFrame(pipe_data)
+        
+        # Export both to CSV
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "Download Manholes CSV",
+                data=manhole_df.to_csv(index=True),
+                file_name="manholes.csv",
+                mime="text/csv"
+            )
+        with col2:
+            st.download_button(
+                "Download Pipes CSV",
+                data=pipe_df.to_csv(index=False),
+                file_name="pipes.csv",
+                mime="text/csv"
+            )
+    
+    else:  # Excel
+        # Create Excel file with multiple sheets
+        output = StringIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # Write manholes
+            pd.DataFrame.from_dict(manholes, orient='index').to_excel(
+                writer, sheet_name='Manholes')
+            
+            # Write pipes
+            pipe_data = []
+            for pipe in pipes:
+                pipe_dict = {
+                    'pipe_number': pipe['pipe_number'],
+                    'type': pipe['type'],
+                    'diameter': pipe['diameter'],
+                    'material': pipe.get('material', 'unknown'),
+                    'is_connection': pipe.get('is_connection', False),
+                    'start_x': pipe['start_point'][0],
+                    'start_y': pipe['start_point'][1],
+                    'start_z': pipe['start_point'][2]
+                }
+                
+                if 'end_point' in pipe:
+                    pipe_dict.update({
+                        'end_x': pipe['end_point'][0],
+                        'end_y': pipe['end_point'][1],
+                        'end_z': pipe['end_point'][2]
+                    })
+                
+                pipe_data.append(pipe_dict)
+            
+            pd.DataFrame(pipe_data).to_excel(
+                writer, sheet_name='Pipes', index=False)
+            
+            # Write metrics
+            pd.DataFrame([metrics]).to_excel(
+                writer, sheet_name='Network Metrics')
+        
+        st.download_button(
+            "Download Excel",
+            data=output.getvalue(),
+            file_name="pipe_network.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 def create_manhole_connection(manhole1_data, manhole2_data, pipe1, pipe2, manhole1_id, manhole2_id):
     """Create a connecting pipe between two manholes based on compatible pipes."""
@@ -789,16 +945,7 @@ if uploaded_file is not None:
             # Create tabs for different visualizations
             tab1, tab2, tab3, tab4 = st.tabs(["3D View", "Network Analysis", "Elevation Profile", "Export"])
             
-            def update_view():
-                st.rerun()
-            
-            # Initialize camera with standard parameters
-            if 'camera' not in st.session_state:
-                st.session_state.camera = dict(
-                    up=dict(x=0, y=0, z=1),      
-                    center=dict(x=0, y=0, z=0),   
-                    eye=dict(x=1.25, y=1.25, z=1.25)  
-                )
+
             
             with tab1:
                 # Camera controls in an expander
@@ -806,14 +953,16 @@ if uploaded_file is not None:
                     # Standard view presets
                     st.write("Standard Views:")
                     cols = st.columns(4)
-                    for idx, (view_name, _) in enumerate(VIEWS.items()):
+                    for idx, (view_name, camera_settings) in enumerate(VIEWS.items()):
                         with cols[idx]:
                             if st.button(f"{view_name} View"):
-                                update_view(view_name)
+                                st.session_state.camera_state['view_mode'] = view_name
+                                st.session_state.camera_state['custom_camera'] = camera_settings.copy()
+                                st.experimental_rerun()
             
                     # Show current view mode
-                    if st.session_state.current_view:
-                        st.info(f"Current View: {st.session_state.current_view}")
+                    if st.session_state.camera_state['view_mode']:
+                        st.info(f"Current View: {st.session_state.camera_state['view_mode']}")
                     
                     # Manual camera controls
                     if st.checkbox("Show Manual Camera Controls"):
@@ -824,25 +973,25 @@ if uploaded_file is not None:
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             new_eye_x = st.slider("Eye X", -5.0, 5.0, 
-                                value=float(st.session_state.camera['eye']['x']), 
+                                value=float(st.session_state.camera_state['custom_camera']['eye']['x']), 
                                 key='eye_x')
-                            if new_eye_x != st.session_state.camera['eye']['x']:
-                                st.session_state.camera['eye']['x'] = new_eye_x
-                                st.session_state.current_view = None  # Clear view mode when manually adjusting
+                            if new_eye_x != st.session_state.camera_state['custom_camera']['eye']['x']:
+                                st.session_state.camera_state['custom_camera']['eye']['x'] = new_eye_x
+                                st.session_state.camera_state['view_mode'] = None
                         with col2:
                             new_eye_y = st.slider("Eye Y", -5.0, 5.0, 
-                                value=float(st.session_state.camera['eye']['y']),
+                                value=float(st.session_state.camera_state['custom_camera']['eye']['y']),
                                 key='eye_y')
-                            if new_eye_y != st.session_state.camera['eye']['y']:
-                                st.session_state.camera['eye']['y'] = new_eye_y
-                                st.session_state.current_view = None
+                            if new_eye_y != st.session_state.camera_state['custom_camera']['eye']['y']:
+                                st.session_state.camera_state['custom_camera']['eye']['y'] = new_eye_y
+                                st.session_state.camera_state['view_mode'] = None
                         with col3:
                             new_eye_z = st.slider("Eye Z", -5.0, 5.0, 
-                                value=float(st.session_state.camera['eye']['z']),
+                                value=float(st.session_state.camera_state['custom_camera']['eye']['z']),
                                 key='eye_z')
-                            if new_eye_z != st.session_state.camera['eye']['z']:
-                                st.session_state.camera['eye']['z'] = new_eye_z
-                                st.session_state.current_view = None
+                            if new_eye_z != st.session_state.camera_state['custom_camera']['eye']['z']:
+                                st.session_state.camera_state['custom_camera']['eye']['z'] = new_eye_z
+                                st.session_state.camera_state['view_mode'] = None
             
                 # Create and display the visualization
                 fig = create_3d_visualization(
@@ -854,7 +1003,7 @@ if uploaded_file is not None:
                     selected_utilities
                 )
             
-                # Display the plot
+                # Display the plot with persistent camera settings
                 st.plotly_chart(
                     fig, 
                     use_container_width=True, 
@@ -870,8 +1019,8 @@ if uploaded_file is not None:
                 # Display current camera settings
                 with st.expander("Debug: Current Camera Settings"):
                     st.json({
-                        "current_view": st.session_state.current_view,
-                        "camera": st.session_state.camera
+                        "view_mode": st.session_state.camera_state['view_mode'],
+                        "camera": st.session_state.camera_state['custom_camera']
                     })
             
             with tab2:

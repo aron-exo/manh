@@ -6,4 +6,3 @@ scipy
 openpyxl
 folium
 pyproj
-streamlit-folium

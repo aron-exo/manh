@@ -13,11 +13,24 @@ from collections import defaultdict
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
-def validate_numeric(value, default=0.0):
-    """Validate and convert numeric values, returning default if invalid."""
+def validate_numeric(value, default=0.0, allow_zero=True):
+    """
+    Validate and convert numeric values with enhanced validation.
+    
+    Args:
+        value: Value to validate
+        default: Default value if invalid
+        allow_zero: Whether to allow zero values
+    Returns:
+        float: Validated numeric value
+    """
     try:
         result = float(value)
-        return result if not pd.isna(result) else default
+        if pd.isna(result):
+            return default
+        if not allow_zero and result == 0:
+            return default
+        return result
     except (ValueError, TypeError):
         return default
 
@@ -47,20 +60,37 @@ def clean_data(df):
     # Rename columns
     df = df.rename(columns=column_mapping)
     
+    # Remove rows where both X and Y are 0 or missing
+    df = df[~((df['X'].fillna(0) == 0) & (df['Y'].fillna(0) == 0))]
+    
     # Convert numeric columns with validation
-    numeric_columns = ['X', 'Y', 'Z = Ground Level Elevation', 'Depth of Manhole to GL',
-                      'Depth of the Utilities from GL', 'Diameter of the Utilities (inch)',
-                      'Exit Azimuth of Utility']
+    numeric_columns = {
+        'X': {'allow_zero': False},
+        'Y': {'allow_zero': False},
+        'Z = Ground Level Elevation': {'allow_zero': True},
+        'Depth of Manhole to GL': {'allow_zero': True},
+        'Depth of the Utilities from GL': {'allow_zero': True},
+        'Diameter of the Utilities (inch)': {'allow_zero': False, 'default': 1.0},
+        'Exit Azimuth of Utility': {'allow_zero': True}
+    }
     
-    for col in numeric_columns:
+    for col, params in numeric_columns.items():
         if col in df.columns:
-            df[col] = df[col].apply(lambda x: validate_numeric(x))
+            df[col] = df[col].apply(lambda x: validate_numeric(
+                x, 
+                default=params.get('default', 0.0),
+                allow_zero=params.get('allow_zero', True)
+            ))
     
-    # Ensure non-numeric columns are strings
+    # Ensure non-numeric columns are strings and remove empty rows
     string_columns = ['Type of Utility', 'Material of the Utility', 'exoTag']
     for col in string_columns:
         if col in df.columns:
             df[col] = df[col].fillna('Unknown').astype(str)
+            df = df[df[col].str.strip() != '']
+    
+    # Remove rows with invalid coordinates
+    df = df[df['X'].notna() & df['Y'].notna() & (df['X'] != 0) & (df['Y'] != 0)]
     
     return df
 
@@ -282,6 +312,11 @@ def process_data(df, params):
     # Process manholes and pipes
     for manhole_id, manhole_group in cleaned_data.groupby('exoTag'):
         first_row = manhole_group.iloc[0]
+        
+        # Skip invalid coordinates
+        if first_row['X'] == 0 and first_row['Y'] == 0:
+            continue
+            
         x, y = first_row['X'], first_row['Y']
         z_ground_level = first_row['Z = Ground Level Elevation']
         depth_of_manhole = first_row['Depth of Manhole to GL']
@@ -299,23 +334,25 @@ def process_data(df, params):
                 if pd.isna(row['Exit Azimuth of Utility']):
                     continue
 
+                # Skip if coordinates are invalid
+                if row['X'] == 0 and row['Y'] == 0:
+                    continue
+
                 azimuth_rad = math.radians(float(row['Exit Azimuth of Utility']))
                 dx = math.sin(azimuth_rad)
                 dy = math.cos(azimuth_rad)
 
-                try:
-                    diameter = float(row['Diameter of the Utilities (inch)']) * 0.0254  # Convert to meters
-                    if pd.isna(diameter) or diameter <= 0:
-                        diameter = 0.1  # Default diameter
-                except (ValueError, TypeError):
-                    diameter = 0.1
+                diameter = validate_numeric(
+                    row['Diameter of the Utilities (inch)'] * 0.0254,  # Convert to meters
+                    default=0.1,
+                    allow_zero=False
+                )
 
-                try:
-                    utility_depth = float(row['Depth of the Utilities from GL'])
-                    if pd.isna(utility_depth):
-                        utility_depth = 0
-                except (ValueError, TypeError):
-                    utility_depth = 0
+                utility_depth = validate_numeric(
+                    row['Depth of the Utilities from GL'],
+                    default=0,
+                    allow_zero=True
+                )
 
                 z_pipe = z_ground_level - utility_depth
 

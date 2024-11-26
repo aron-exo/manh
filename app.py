@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import math
 import json
-from streamlit_folium import folium_static
+from streamlit_folium import st_folium
 from pyproj import Transformer
 
 # Configure page
@@ -217,7 +217,7 @@ def clean_data(df):
     string_columns = ['Type of Utility', 'Material of the Utility', 'exoTag']
     for col in string_columns:
         if col in df.columns:
-            df[col] = df[col].fillna('Unknown').astype(str)
+            df[col] = df[col].fillna('Unknown').infer_objects(copy=False).astype(str)
             df = df[df[col].str.strip() != '']
     
     # Remove rows with invalid coordinates
@@ -395,7 +395,7 @@ if uploaded_file is not None:
             )
             
             # Display map
-            folium_static(m, width=1200, height=800)
+            st_folium(m, width=1200, height=800)
             
             # Display statistics
             with st.expander("Network Statistics"):

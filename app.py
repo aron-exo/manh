@@ -223,6 +223,35 @@ def create_elevation_profile(manholes, pipes):
     
     return fig
 
+# And in the main app code, replace the elevation profile section with:
+
+with tab3:
+    st.subheader("Elevation Profile")
+    
+    # Add elevation controls
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        vertical_exaggeration = st.number_input(
+            "Vertical Exaggeration",
+            min_value=1,
+            max_value=10,
+            value=2
+        )
+    
+    # Create elevation profile
+    elevation_fig = create_elevation_profile(manholes, pipes)
+    
+    # Update the y-axis scale using the correct method name
+    elevation_fig.update_layout(
+        yaxis=dict(
+            scaleanchor=None,
+            scaleratio=1/vertical_exaggeration
+        )
+    )
+    
+    with col1:
+        st.plotly_chart(elevation_fig, use_container_width=True)
+
 def create_network_analysis(pipes):
     # Analyze pipe types and diameters
     pipe_types = defaultdict(int)

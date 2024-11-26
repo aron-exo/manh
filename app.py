@@ -135,6 +135,17 @@ def calculate_pipe_endpoints(manholes, pipes, pipe_length):
     return pipe_endpoints
 
 def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, show_pipes=True, selected_utilities=None):
+    """
+    Create 3D visualization of the pipe network.
+    
+    Args:
+        manholes: Dictionary of manhole data
+        pipes: List of pipe data
+        pipe_length: Length of pipes (in meters)
+        show_manholes: Boolean to show/hide manholes
+        show_pipes: Boolean to show/hide pipes
+        selected_utilities: List of utility types to display
+    """
     fig = go.Figure()
 
     # Add manholes
@@ -165,20 +176,44 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
             name='Manholes'
         ))
 
-    # Add pipes
+    # Add pipes and connections
     if show_pipes:
-        pipe_endpoints = calculate_pipe_endpoints(manholes, pipes, pipe_length)
-        
         # Group pipes by type
         pipe_groups = defaultdict(list)
-        for pipe in pipe_endpoints:
+        
+        for pipe in pipes:
             if selected_utilities is None or pipe['type'] in selected_utilities:
-                pipe_groups[pipe['type']].append(pipe)
+                if 'is_connection' in pipe:
+                    # For connection pipes, use the pre-calculated endpoints
+                    pipe_data = {
+                        'start': pipe['start_point'],
+                        'end': pipe['end_point'],
+                        'type': pipe['type'],
+                        'diameter': pipe['diameter'],
+                        'is_connection': True,
+                        'pipe_number': pipe['pipe_number']
+                    }
+                else:
+                    # For regular pipes, calculate endpoints based on direction and length
+                    start_point = pipe['start_point']
+                    end_point = (
+                        start_point[0] + pipe['direction'][0] * pipe_length,
+                        start_point[1] + pipe['direction'][1] * pipe_length,
+                        start_point[2]
+                    )
+                    pipe_data = {
+                        'start': start_point,
+                        'end': end_point,
+                        'type': pipe['type'],
+                        'diameter': pipe['diameter'],
+                        'is_connection': False,
+                        'pipe_number': pipe['pipe_number']
+                    }
+                pipe_groups[pipe['type']].append(pipe_data)
 
         # Add pipes by type
         for pipe_type, pipes_of_type in pipe_groups.items():
             for pipe in pipes_of_type:
-                # Validate and adjust line width
                 try:
                     min_width = 2
                     max_width = 10
@@ -189,6 +224,15 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
                 except:
                     line_width = min_width
 
+                line_style = 'dot' if pipe.get('is_connection', False) else 'solid'
+                
+                hover_text = (
+                    f"{pipe_type}<br>"
+                    f"{'Connection ' if pipe.get('is_connection', False) else ''}"
+                    f"Pipe: {pipe['pipe_number']}<br>"
+                    f"Diameter: {pipe['diameter']*1000:.1f}mm"
+                )
+
                 fig.add_trace(go.Scatter3d(
                     x=[pipe['start'][0], pipe['end'][0]],
                     y=[pipe['start'][1], pipe['end'][1]],
@@ -196,10 +240,11 @@ def create_3d_visualization(manholes, pipes, pipe_length, show_manholes=True, sh
                     mode='lines',
                     line=dict(
                         color=get_color_for_utility_type(pipe_type),
-                        width=line_width
+                        width=line_width,
+                        dash=line_style
                     ),
-                    name=pipe_type,
-                    hovertext=f"{pipe_type}<br>Diameter: {pipe['diameter']*1000:.1f}mm",
+                    name=f"{pipe_type} {'(Connection)' if pipe.get('is_connection', False) else ''}",
+                    hovertext=hover_text,
                     hoverinfo='text'
                 ))
 
